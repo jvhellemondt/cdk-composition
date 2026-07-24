@@ -15,8 +15,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "outDir": "lib",
-    "rootDir": "src"
+    "types": ["bun-types"]
   },
   "include": ["src", "test"],
   "exclude": ["node_modules", "lib"]
