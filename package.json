@@ -21,8 +21,10 @@
     "aws-cdk-lib": "^2.0.0",
     "constructs": "^10.0.0"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+  "packageManager": "pnpm@11.17.0",
+  "engines": {
+    "node": ">=26.0.0",
+    "pnpm": ">=11.0.0"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.0.0",
