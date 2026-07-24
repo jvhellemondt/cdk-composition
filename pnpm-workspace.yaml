@@ -1,8 +1,0 @@
-allowBuilds:
-  esbuild: true
-
-onlyBuiltDependencies:
-  - esbuild
-
-policies:
-  minimumReleaseAge: '0 seconds'
