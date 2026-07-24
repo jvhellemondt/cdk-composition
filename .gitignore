@@ -1,7 +1,3 @@
-# Compiled output
-lib/
-*.tsbuildinfo
-
 # Logs
 logs
 *.log
