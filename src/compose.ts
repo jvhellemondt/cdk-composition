@@ -13,14 +13,18 @@ export interface PropertyTrait {
 }
 
 /**
- * Declares an intent to call a method on the construct after instantiation.
- * `name` is a human-readable label and has no functional effect yet.
- * `args` are the arguments that will eventually be forwarded to the method.
+ * Declares a method call to be made on the construct after all siblings are
+ * instantiated. `name` is the method name on the construct. `args` receives the
+ * fully-populated resources map so any sibling can be referenced by its CDK id.
+ *
+ * Method traits are applied in reverse entry order (latest sibling first) to
+ * ensure constructs declared later in the composition are already configured
+ * when earlier ones' methods run.
  */
 export interface MethodTrait {
   name: string;
   type: "method";
-  args: unknown[];
+  args: (resources: Map<string, Construct>) => unknown[];
 }
 
 /** A named, typed descriptor that modifies or extends a construct entry. */
@@ -32,6 +36,12 @@ interface Entry {
   readonly traits: ReadonlyArray<Trait>;
 }
 
+/** Pending method call, captured during phase 1 and executed in phase 2. */
+interface PendingMethod {
+  readonly construct: Construct;
+  readonly trait: MethodTrait;
+}
+
 /**
  * An immutable description of a group of CDK constructs to be created together
  * under a shared scope. Built via {@link compose} and extended with {@link Composition.and}.
@@ -39,11 +49,12 @@ interface Entry {
  * Nothing is instantiated until {@link Composition.build} is called.
  *
  * @example
- * compose(Queue, [
- *   { name: 'visibility', type: 'property', value: { visibilityTimeout: Duration.seconds(30) } },
+ * compose(Function, [
+ *   { name: 'runtime', type: 'property', value: { runtime: Runtime.NODEJS_24_X } },
+ *   { name: 'eventSource', type: 'method', args: (r) => [new SqsEventSource(r.get('Queue'))] },
  * ])
  *   .and(Queue)
- *   .build(this, "Messaging");
+ *   .build(this, "Worker");
  */
 export class Composition {
   readonly #entries: ReadonlyArray<Entry>;
@@ -69,18 +80,19 @@ export class Composition {
   }
 
   /**
-   * Materialises the composition by instantiating all entries as children of a
-   * new root {@link Construct} at `scope/<id>`.
+   * Materialises the composition in two phases:
    *
-   * **Naming** — each entry's CDK id is its class name (e.g. `Queue`). If the
-   * same class appears more than once, a numeric suffix is appended starting at
-   * `1` (`Queue`, `Queue1`, `Queue2`, …).
+   * **Phase 1 — instantiation (forward order)**
+   * Every entry is constructed and added to a `resources` map keyed by CDK id
+   * (`Queue`, `Queue1`, `Bucket`, …). Duplicate class names get a numeric suffix
+   * starting at `1`. Property traits are merged (last wins) into props before
+   * each construct is created.
    *
-   * **`property` traits** — their `value` objects are shallow-merged into the
-   * construct's props before instantiation. Later traits in the array win on key
-   * collisions (last wins).
-   *
-   * **`method` traits** — declared but not yet applied.
+   * **Phase 2 — method application (reverse order, latest first)**
+   * Method traits are called on their construct in reverse entry order, so later
+   * siblings are fully instantiated before earlier ones' methods run. Each
+   * `args` function receives the complete resources map to resolve cross-sibling
+   * references.
    *
    * @param scope - The CDK scope to place the root construct in.
    * @param id - The CDK id for the root construct.
@@ -88,22 +100,38 @@ export class Composition {
    */
   build(scope: Construct, id: string): Construct {
     const root = new Construct(scope, id);
-
-    // Track how many times each constructor has appeared so duplicate classes
-    // get a numeric suffix instead of colliding on the same CDK id.
     const seen = new Map<Ctor, number>();
+    const resources = new Map<string, Construct>();
+    const pending: PendingMethod[] = [];
 
+    // Phase 1: instantiate every construct and collect method traits.
     for (const { ctor, traits } of this.#entries) {
       const count = seen.get(ctor) ?? 0;
       seen.set(ctor, count + 1);
-      const entryId = count === 0 ? ctor.name : `${ctor.name}${count}`;
+      // Strip trailing digits that bundlers append to class names (e.g. "Queue2" → "Queue").
+      const baseName = ctor.name.replace(/\d+$/, "");
+      const entryId = count === 0 ? baseName : `${baseName}${count}`;
 
-      // Merge all property trait values left-to-right into a single props object.
       const config = traits
         .filter((t): t is PropertyTrait => t.type === "property")
         .reduce<Record<string, unknown>>((acc, t) => ({ ...acc, ...t.value }), {});
 
-      new ctor(root, entryId, config);
+      const construct = new ctor(root, entryId, config);
+      resources.set(entryId, construct);
+
+      for (const trait of traits) {
+        if (trait.type === "method") {
+          pending.push({ construct, trait });
+        }
+      }
+    }
+
+    // Phase 2: apply method traits latest-first so cross-sibling references
+    // resolve against already-configured constructs.
+    for (const { construct, trait } of pending.toReversed()) {
+      (construct as Record<string, (...a: unknown[]) => unknown>)[trait.name](
+        ...trait.args(resources),
+      );
     }
 
     return root;
@@ -117,11 +145,12 @@ export class Composition {
  * {@link Composition.build} to materialise everything under a shared CDK scope.
  *
  * ```ts
- * compose(Queue, [
- *   { name: 'visibility', type: 'property', value: { visibilityTimeout: Duration.seconds(30) } },
+ * compose(Function, [
+ *   { name: 'runtime', type: 'property', value: { runtime: Runtime.NODEJS_24_X } },
+ *   { name: 'addEventSource', type: 'method', args: (r) => [new SqsEventSource(r.get('Queue'))] },
  * ])
  *   .and(Queue)
- *   .build(this, "Messaging");
+ *   .build(this, "Worker");
  * ```
  *
  * @param ctor - The CDK construct class to start the composition with.
