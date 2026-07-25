@@ -18,20 +18,31 @@ describe("compose", () => {
     t.resourceCountIs("AWS::S3::Bucket", 1);
   });
 
-  test("plain-object traits are merged into props", () => {
+  test("property traits are merged into props", () => {
     const s = stack();
-    compose(Queue, [{ visibilityTimeout: Duration.seconds(60) }]).build(s, "Service");
+    compose(Queue, [
+      { name: "visibility", type: "property", value: { visibilityTimeout: Duration.seconds(60) } },
+    ]).build(s, "Service");
     Template.fromStack(s).hasResourceProperties("AWS::SQS::Queue", {
       VisibilityTimeout: 60,
     });
   });
 
-  test("construct traits become co-residents in the same host scope", () => {
+  test("multiple property traits are merged left-to-right", () => {
     const s = stack();
-    compose(Queue, [Bucket]).build(s, "Service");
-    const t = Template.fromStack(s);
-    t.resourceCountIs("AWS::SQS::Queue", 1);
-    t.resourceCountIs("AWS::S3::Bucket", 1);
+    compose(Queue, [
+      { name: "first", type: "property", value: { visibilityTimeout: Duration.seconds(30) } },
+      { name: "second", type: "property", value: { visibilityTimeout: Duration.seconds(60) } },
+    ]).build(s, "Service");
+    Template.fromStack(s).hasResourceProperties("AWS::SQS::Queue", {
+      VisibilityTimeout: 60,
+    });
+  });
+
+  test("method traits are accepted but not yet applied", () => {
+    const s = stack();
+    compose(Queue, [{ name: "grant", type: "method", args: [] }]).build(s, "Service");
+    Template.fromStack(s).resourceCountIs("AWS::SQS::Queue", 1);
   });
 
   test("and() is immutable — returns a new Composition each time", () => {

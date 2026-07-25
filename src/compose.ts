@@ -3,14 +3,28 @@ import { Construct } from "constructs";
 type Ctor<P extends object = object> = new (scope: Construct, id: string, props?: P) => Construct;
 
 /**
- * A trait applied to a construct entry. Two forms are accepted:
- *
- * - **Construct class** — instantiated as a co-resident sibling directly under
- *   the same root scope, using `<primaryId>-<ClassName><index>` as its CDK id.
- * - **Plain object** — shallowly merged (left-to-right) into the construct's
- *   props before instantiation. Later objects win on key collisions.
+ * Declares a prop (or set of props) to merge into the construct's props before
+ * instantiation. `name` is a human-readable label and has no functional effect.
  */
-export type Trait<P extends object = object> = Ctor | Partial<P>;
+export interface PropertyTrait {
+  name: string;
+  type: "property";
+  value: Record<string, unknown>;
+}
+
+/**
+ * Declares an intent to call a method on the construct after instantiation.
+ * `name` is a human-readable label and has no functional effect yet.
+ * `args` are the arguments that will eventually be forwarded to the method.
+ */
+export interface MethodTrait {
+  name: string;
+  type: "method";
+  args: unknown[];
+}
+
+/** A named, typed descriptor that modifies or extends a construct entry. */
+export type Trait = PropertyTrait | MethodTrait;
 
 /** Internal representation of one entry in the composition graph. */
 interface Entry {
@@ -25,8 +39,10 @@ interface Entry {
  * Nothing is instantiated until {@link Composition.build} is called.
  *
  * @example
- * compose(Queue, [{ visibilityTimeout: Duration.seconds(30) }])
- *   .and(Queue, [DeadLetterAlarm])   // sibling Queue + a co-resident Alarm trait
+ * compose(Queue, [
+ *   { name: 'visibility', type: 'property', value: { visibilityTimeout: Duration.seconds(30) } },
+ * ])
+ *   .and(Queue)
  *   .build(this, "Messaging");
  */
 export class Composition {
@@ -37,20 +53,19 @@ export class Composition {
   }
 
   /** @internal */
-  static of<P extends object>(ctor: Ctor<P>, traits: Array<Trait<P>> = []): Composition {
-    return new Composition([{ ctor: ctor as Ctor, traits }]);
+  static of(ctor: Ctor, traits: Trait[] = []): Composition {
+    return new Composition([{ ctor, traits }]);
   }
 
   /**
-   * Appends a sibling construct entry to the composition and returns a new
-   * {@link Composition}. The original is left unchanged (immutable).
+   * Appends a sibling construct entry and returns a new {@link Composition}.
+   * The original is left unchanged (immutable).
    *
    * @param ctor - The CDK construct class to add as a sibling.
-   * @param traits - Traits to apply: plain objects are merged into props;
-   *   construct classes become co-residents under the same root scope.
+   * @param traits - Traits to apply to this entry.
    */
-  and<P extends object>(ctor: Ctor<P>, traits: Array<Trait<P>> = []): Composition {
-    return new Composition([...this.#entries, { ctor: ctor as Ctor, traits }]);
+  and(ctor: Ctor, traits: Trait[] = []): Composition {
+    return new Composition([...this.#entries, { ctor, traits }]);
   }
 
   /**
@@ -59,11 +74,12 @@ export class Composition {
    *
    * **Naming** — each entry's CDK id is its class name (e.g. `Queue`). If the
    * same class appears more than once, a numeric suffix is appended starting at
-   * `1` (`Queue`, `Queue1`, `Queue2`, …). Construct-class traits follow the
-   * pattern `<primaryId>-<TraitClassName><traitIndex>`.
+   * `1` (`Queue`, `Queue1`, `Queue2`, …).
    *
-   * **Props** — plain-object traits are shallow-merged left-to-right before the
-   * construct is instantiated, so later objects override earlier ones.
+   * **`property` traits** — their `value` objects are shallow-merged left-to-right
+   * into the construct's props before instantiation. Later traits win on key collisions.
+   *
+   * **`method` traits** — declared but not yet applied.
    *
    * @param scope - The CDK scope to place the root construct in.
    * @param id - The CDK id for the root construct.
@@ -81,22 +97,12 @@ export class Composition {
       seen.set(ctor, count + 1);
       const entryId = count === 0 ? ctor.name : `${ctor.name}${count}`;
 
-      // Collect plain-object traits and merge them into a single props object.
-      // Construct-class traits are handled separately below.
+      // Merge all property trait values left-to-right into a single props object.
       const config = traits
-        .filter((t): t is Record<string, unknown> => typeof t !== "function")
-        .reduce<Record<string, unknown>>((acc, t) => ({ ...acc, ...t }), {});
+        .filter((t): t is PropertyTrait => t.type === "property")
+        .reduce<Record<string, unknown>>((acc, t) => ({ ...acc, ...t.value }), {});
 
       new ctor(root, entryId, config);
-
-      // Instantiate construct-class traits as co-residents under the same root.
-      // The index `j` is included in the id to prevent collisions when the same
-      // trait class appears more than once for an entry.
-      for (const [j, trait] of traits.entries()) {
-        if (typeof trait === "function") {
-          new (trait as Ctor)(root, `${entryId}-${trait.name}${j}`);
-        }
-      }
     }
 
     return root;
@@ -110,18 +116,16 @@ export class Composition {
  * {@link Composition.build} to materialise everything under a shared CDK scope.
  *
  * ```ts
- * compose(Queue, [{ visibilityTimeout: Duration.seconds(30) }])
- *   .and(Queue, [DeadLetterAlarm])
+ * compose(Queue, [
+ *   { name: 'visibility', type: 'property', value: { visibilityTimeout: Duration.seconds(30) } },
+ * ])
+ *   .and(Queue)
  *   .build(this, "Messaging");
  * ```
  *
  * @param ctor - The CDK construct class to start the composition with.
- * @param traits - Traits to apply: plain objects are merged into props;
- *   construct classes become co-residents under the root scope.
+ * @param traits - Traits to apply to this entry.
  */
-export function compose<P extends object>(
-  ctor: Ctor<P>,
-  traits: Array<Trait<P>> = [],
-): Composition {
+export function compose(ctor: Ctor, traits: Trait[] = []): Composition {
   return Composition.of(ctor, traits);
 }
