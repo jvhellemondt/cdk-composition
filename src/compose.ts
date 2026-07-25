@@ -33,8 +33,33 @@ export interface MethodTrait {
   args: (resources: Map<string, Construct>) => unknown[];
 }
 
+/**
+ * Runs arbitrary logic against the construct after all siblings are instantiated.
+ * `run` receives the construct itself and the complete resources map, giving it
+ * access to siblings and — via `Stack.of(construct)` — the broader CDK tree.
+ *
+ * Use this for cross-composition wiring that cannot be expressed as a method
+ * call, such as locating a shared construct in the parent stack.
+ *
+ * @example
+ * // Finds the HttpApi anywhere in the stack and wires a route to this Function.
+ * const httpRoute = (path: string, method: HttpMethod): ActionTrait => ({
+ *   name: `route-${method.toLowerCase()}-${path}`,
+ *   type: "action",
+ *   run: (fn, _r) => {
+ *     const api = Stack.of(fn).node.findAll().find((c): c is HttpApi => c instanceof HttpApi);
+ *     api!.addRoutes({ path, methods: [method], integration: new HttpLambdaIntegration(path, fn as Function) });
+ *   },
+ * });
+ */
+export interface ActionTrait {
+  name: string;
+  type: "action";
+  run: (construct: Construct, resources: Map<string, Construct>) => void;
+}
+
 /** A named, typed descriptor that modifies or extends a construct entry. */
-export type Trait = PropertyTrait | MethodTrait;
+export type Trait = PropertyTrait | MethodTrait | ActionTrait;
 
 /** Internal representation of one entry in the composition graph. */
 interface Entry {
@@ -42,10 +67,10 @@ interface Entry {
   readonly traits: ReadonlyArray<Trait>;
 }
 
-/** Pending method call, captured during phase 1 and executed in phase 2. */
-interface PendingMethod {
+/** Pending deferred trait, captured during phase 1 and executed in phase 2. */
+interface PendingDeferred {
   readonly construct: Construct;
-  readonly trait: MethodTrait;
+  readonly trait: MethodTrait | ActionTrait;
 }
 
 /**
@@ -111,7 +136,7 @@ export class Composition {
   build(scope: Construct, id: string): Construct {
     const root = new Construct(scope, id);
     const resources = new Map<string, Construct>();
-    const pending: PendingMethod[] = [];
+    const pending: PendingDeferred[] = [];
 
     // Pre-assign IDs in forward (declaration) order for predictable naming.
     const seen = new Map<Ctor, number>();
@@ -138,18 +163,22 @@ export class Composition {
       resources.set(entryId, construct);
 
       for (const trait of traits) {
-        if (trait.type === "method") {
+        if (trait.type === "method" || trait.type === "action") {
           pending.push({ construct, trait });
         }
       }
     }
 
-    // Phase 2: apply method traits in the order collected during phase 1
+    // Phase 2: apply deferred traits in the order collected during phase 1
     // (latest-declared first), so later siblings are already configured.
     for (const { construct, trait } of pending) {
-      (construct as Record<string, (...a: unknown[]) => unknown>)[trait.name](
-        ...trait.args(resources),
-      );
+      if (trait.type === "method") {
+        (construct as Record<string, (...a: unknown[]) => unknown>)[trait.name](
+          ...trait.args(resources),
+        );
+      } else {
+        trait.run(construct, resources);
+      }
     }
 
     return root;
