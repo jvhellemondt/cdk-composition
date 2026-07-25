@@ -28,18 +28,22 @@ export class Composition {
 
   build(scope: Construct, id: string): Construct {
     const root = new Construct(scope, id);
+    const seen = new Map<Ctor, number>();
 
-    for (const [i, { ctor, traits }] of this.#entries.entries()) {
+    for (const { ctor, traits } of this.#entries) {
+      const count = seen.get(ctor) ?? 0;
+      seen.set(ctor, count + 1);
+      const entryId = count === 0 ? ctor.name : `${ctor.name}${count}`;
+
       const config = traits
         .filter((t): t is Record<string, unknown> => typeof t !== "function")
         .reduce<Record<string, unknown>>((acc, t) => ({ ...acc, ...t }), {});
 
-      const host = new Construct(root, String(i));
-      new ctor(host, "Default", config);
+      new ctor(root, entryId, config);
 
-      for (const trait of traits) {
+      for (const [j, trait] of traits.entries()) {
         if (typeof trait === "function") {
-          new (trait as Ctor)(host, trait.name);
+          new (trait as Ctor)(root, `${entryId}-${trait.name}${j}`);
         }
       }
     }
