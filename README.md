@@ -24,102 +24,111 @@ bun add cdk-composition
 
 ## Concepts
 
-A **Composition** is an immutable, ordered list of CDK construct classes, each paired with zero or more traits. Nothing is instantiated until `.build()` is called. `build()` runs in two phases:
+Traits are **named, typed values defined outside the composition**. They live in a shared file or library, carry a descriptive name, and describe a single concern. A `compose()` call is then a readable manifest — which constructs belong together and which named capabilities each carries — with no configuration detail buried inside it.
+
+`build()` materialises the composition in two phases:
 
 1. **Instantiation** — constructs are created in *reverse* declaration order so that later-declared siblings are already in the resources map when earlier entries' property functions run.
-2. **Deferred traits** — method and action traits are applied in the order they were collected during phase 1 (latest-declared first).
+2. **Deferred traits** — method and action traits are applied in the order collected during phase 1 (latest-declared first).
 
 Constructs are named by their class name. Duplicates get a numeric suffix (`Queue`, `Queue1`, …).
+
+---
 
 ## Traits
 
 ### PropertyTrait
 
-**Merges configuration into a construct's props before it is instantiated.**
+Merges configuration into a construct's props before it is instantiated.
 
-Use a plain object for static values. Use a function when you need to reference a sibling construct — because phase 1 runs in reverse declaration order, any sibling declared *after* the current entry is already available in the resources map.
+`value` is a plain object for static configuration, or a function when a prop needs to reference a sibling construct. Because phase 1 runs in reverse declaration order, any sibling declared *after* the current entry is already in the resources map when the function runs.
 
 ```ts
+// traits/queue.ts
 import { Duration } from "aws-cdk-lib";
-import { Queue } from "aws-cdk-lib/aws-sqs";
-import { compose } from "cdk-composition";
+import { type PropertyTrait } from "cdk-composition";
 
-// Plain object — merged directly into Queue's props
-compose(Queue, [
-  {
-    name: "visibility",
-    type: "property",
-    value: { visibilityTimeout: Duration.seconds(30) },
-  },
-]).build(this, "MyQueue");
+export const thirtySecondVisibility: PropertyTrait = {
+  name: "visibility-30s",
+  type: "property",
+  value: { visibilityTimeout: Duration.seconds(30) },
+};
+
+// Function form — references a sibling that will be declared later in the composition
+export const withDeadLetterQueue: PropertyTrait = {
+  name: "dead-letter-queue",
+  type: "property",
+  value: (r) => ({ deadLetterQueue: r.get("Queue") }),
+};
 ```
 
-Multiple property traits are merged left-to-right; later traits win on key collisions. This makes it straightforward to apply a base trait and override specific keys with a more specific one.
-
 ```ts
-// The second trait wins — effective timeout is 60 s
-compose(Queue, [
-  { name: "base", type: "property", value: { visibilityTimeout: Duration.seconds(30) } },
-  { name: "override", type: "property", value: { visibilityTimeout: Duration.seconds(60) } },
-]).build(this, "MyQueue");
-```
-
-The function form receives the resources map, which already contains any sibling declared *later* in the composition:
-
-```ts
-// Function references "Queue", which is declared below via .and()
-compose(Function, [
-  {
-    name: "deadLetterQueue",
-    type: "property",
-    value: (r) => ({ deadLetterQueue: r.get("Queue") }),
-  },
-])
-  .and(Queue)
+// stack.ts
+compose(Function, [withDeadLetterQueue])
+  .and(Queue, [thirtySecondVisibility])
   .build(this, "Worker");
 ```
+
+Multiple property traits are merged left-to-right; later traits win on key collisions. Apply a base trait and override specific keys with a more specific one — no subclassing required.
 
 ---
 
 ### MethodTrait
 
-**Calls a named method on the construct after all siblings are instantiated.**
+Calls a named method on the construct after all siblings are instantiated.
 
-Use this for configuration that requires calling a method rather than setting props — lifecycle rules, event source mappings, policy grants. The `args` function receives the fully-populated resources map so any sibling can be referenced.
+Use this for configuration that requires a method call rather than props — lifecycle rules, event source mappings, policy grants. The `args` function receives the fully-populated resources map so any sibling can be referenced by name.
 
 ```ts
+// traits/bucket.ts
 import { Duration } from "aws-cdk-lib";
-import { Bucket } from "aws-cdk-lib/aws-s3";
-import { compose } from "cdk-composition";
+import { type MethodTrait } from "cdk-composition";
+import { Queue } from "aws-cdk-lib/aws-sqs";
+import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 
-compose(Bucket, [
-  {
-    name: "addLifecycleRule",
-    type: "method",
-    args: (_r) => [{ expiration: Duration.days(90) }],
-  },
-]).build(this, "Archive");
+export const ninetyDayExpiry: MethodTrait = {
+  name: "lifecycle-90d-expiry",
+  type: "method",
+  args: (_r) => [{ expiration: Duration.days(90) }],
+};
+
+// traits/lambda.ts
+export const withSqsEventSource = (batchSize = 10): MethodTrait => ({
+  name: "sqs-event-source",
+  type: "method",
+  args: (r) => [new SqsEventSource(r.get("Queue") as Queue, { batchSize })],
+});
 ```
 
-Method traits are applied in latest-declared-first order, matching the reverse-instantiation order of phase 1. This means siblings added via later `.and()` calls have their methods applied before earlier entries.
+```ts
+// stack.ts
+compose(Bucket, [ninetyDayExpiry]).build(this, "Archive");
+
+compose(Function, [withSqsEventSource(5)])
+  .and(Queue)
+  .build(this, "Worker");
+```
+
+Method traits are applied latest-declared-first, matching the reverse-instantiation order of phase 1.
 
 ---
 
 ### ActionTrait
 
-**Runs arbitrary logic against the construct after all siblings are instantiated.**
+Runs arbitrary logic against the construct after all siblings are instantiated.
 
-Use this for cross-composition wiring that cannot be expressed as a method call — most commonly finding a shared construct elsewhere in the stack via `Stack.of(construct).node.findAll()`. This lets you wire constructs across compositions without making either side explicitly aware of the other.
+Use this for cross-composition wiring that cannot be expressed as a method call. The `run` function receives the construct itself, so `Stack.of(construct).node.findAll()` can locate any construct in the broader CDK tree — including shared infrastructure from a different composition.
 
 ```ts
+// traits/api.ts
 import { Stack } from "aws-cdk-lib";
-import { Function, Runtime } from "aws-cdk-lib/aws-lambda";
+import { Function } from "aws-cdk-lib/aws-lambda";
 import { HttpApi, HttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
-import { compose, type ActionTrait } from "cdk-composition";
+import { type ActionTrait } from "cdk-composition";
 
-const httpRoute = (path: string, method: HttpMethod): ActionTrait => ({
-  name: `route-${method.toLowerCase()}-${path}`,
+export const httpRoute = (path: string, method: HttpMethod): ActionTrait => ({
+  name: `http-route-${method.toLowerCase()}-${path}`,
   type: "action",
   run: (fn, _r) => {
     const api = Stack.of(fn).node
@@ -132,32 +141,54 @@ const httpRoute = (path: string, method: HttpMethod): ActionTrait => ({
     });
   },
 });
-
-compose(Function, [
-  { name: "runtime", type: "property", value: { runtime: Runtime.NODEJS_24_X } },
-  httpRoute("/orders", HttpMethod.POST),
-]).build(this, "CreateOrder");
 ```
 
-Because `ActionTrait` exposes `Stack.of(construct)`, it can reach any construct in the CDK tree — not just siblings in the same composition. This makes each route its own composition, with no shared state between them, while all of them still wire to the same `HttpApi`.
+```ts
+// stack.ts — each route is its own composition; all wire to the same shared HttpApi
+compose(Function, [nodeRuntime, httpRoute("/orders", HttpMethod.POST)]).build(this, "CreateOrder");
+compose(Function, [nodeRuntime, httpRoute("/orders", HttpMethod.GET)]).build(this, "ListOrders");
+compose(Function, [nodeRuntime, httpRoute("/orders/:id", HttpMethod.DELETE)]).build(this, "DeleteOrder");
+```
+
+Because `httpRoute` finds the `HttpApi` via the CDK tree rather than through the resources map, each composition stays self-contained. No shared state, no cross-composition imports, no ordering dependencies.
 
 ---
 
 ## Full example
 
-A queue worker that demonstrates all three trait types together: a Lambda function with static props, a cross-sibling dead-letter queue reference, an event source wired via method call, and an HTTP status route wired via the shared `HttpApi`.
+A queue worker that uses all three trait types. Traits are defined in a shared file; the composition itself is a one-screen manifest.
 
 ```ts
+// traits/worker.ts
 import { Duration, Stack } from "aws-cdk-lib";
-import { Function, Runtime } from "aws-cdk-lib/aws-lambda";
+import { Runtime, Function } from "aws-cdk-lib/aws-lambda";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { Queue } from "aws-cdk-lib/aws-sqs";
 import { HttpApi, HttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
-import { compose, type ActionTrait } from "cdk-composition";
+import { type PropertyTrait, type MethodTrait, type ActionTrait } from "cdk-composition";
 
-// Reusable action trait — lives in a shared traits library, not in the stack
-const statusRoute = (path: string): ActionTrait => ({
+export const nodeRuntime: PropertyTrait = {
+  name: "runtime",
+  type: "property",
+  value: { runtime: Runtime.NODEJS_24_X, memorySize: 512, timeout: Duration.seconds(30) },
+};
+
+// Function form — Queue is declared after Function in the composition,
+// but already instantiated by the time this runs (reverse-order phase 1).
+export const withDeadLetterQueue: PropertyTrait = {
+  name: "dead-letter-queue",
+  type: "property",
+  value: (r) => ({ deadLetterQueue: r.get("Queue") }),
+};
+
+export const withSqsEventSource = (batchSize = 10): MethodTrait => ({
+  name: "sqs-event-source",
+  type: "method",
+  args: (r) => [new SqsEventSource(r.get("Queue") as Queue, { batchSize })],
+});
+
+export const statusRoute = (path: string): ActionTrait => ({
   name: `status-route-${path}`,
   type: "action",
   run: (fn, _r) => {
@@ -172,45 +203,30 @@ const statusRoute = (path: string): ActionTrait => ({
   },
 });
 
-compose(Function, [
-  // PropertyTrait (plain object) — static props merged at instantiation
-  {
-    name: "runtime",
-    type: "property",
-    value: {
-      runtime: Runtime.NODEJS_24_X,
-      memorySize: 512,
-      timeout: Duration.seconds(30),
-    },
-  },
-  // PropertyTrait (function form) — Queue is declared below but already
-  // instantiated by the time this runs (reverse-order phase 1)
-  {
-    name: "deadLetterQueue",
-    type: "property",
-    value: (r) => ({ deadLetterQueue: r.get("Queue") }),
-  },
-  // MethodTrait — called after all siblings exist; wires the SQS event source
-  {
-    name: "addEventSource",
-    type: "method",
-    args: (r) => [new SqsEventSource(r.get("Queue") as Queue, { batchSize: 10 })],
-  },
-  // ActionTrait — finds the shared HttpApi anywhere in the stack via Stack.of()
-  statusRoute("/worker/status"),
-])
-  .and(Queue, [
-    // PropertyTrait on Queue — sets visibility timeout to match Lambda timeout
-    {
-      name: "visibility",
-      type: "property",
-      value: { visibilityTimeout: Duration.seconds(30) },
-    },
-  ])
+export const workerVisibility: PropertyTrait = {
+  name: "visibility-30s",
+  type: "property",
+  value: { visibilityTimeout: Duration.seconds(30) },
+};
+```
+
+```ts
+// stack.ts
+import { compose } from "cdk-composition";
+import {
+  nodeRuntime,
+  withDeadLetterQueue,
+  withSqsEventSource,
+  statusRoute,
+  workerVisibility,
+} from "./traits/worker";
+
+compose(Function, [nodeRuntime, withDeadLetterQueue, withSqsEventSource(), statusRoute("/worker/status")])
+  .and(Queue, [workerVisibility])
   .build(this, "Worker");
 ```
 
-The `statusRoute` trait is a plain value — it can live in a shared traits library and be dropped into any composition. The composition itself stays a readable manifest: which constructs belong together, and what named capabilities each carries. No single file accumulates all the configuration details.
+The stack file says what exists and what it can do. The trait file says how each capability is implemented. Neither knows about the other's internals.
 
 ---
 
