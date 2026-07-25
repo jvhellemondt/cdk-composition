@@ -1,0 +1,3 @@
+[test]
+# aws-cdk-lib is large; first-run import regularly exceeds the 5 s default.
+timeout = 30000

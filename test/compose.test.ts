@@ -1,5 +1,5 @@
 import { App, Duration, Stack } from "aws-cdk-lib";
-import { Template } from "aws-cdk-lib/assertions";
+import { Match, Template } from "aws-cdk-lib/assertions";
 import { Bucket } from "aws-cdk-lib/aws-s3";
 import { Queue } from "aws-cdk-lib/aws-sqs";
 import { describe, expect, test } from "bun:test";
@@ -39,10 +39,106 @@ describe("compose", () => {
     });
   });
 
-  test("method traits are accepted but not yet applied", () => {
+  test("property trait value may be a function", () => {
     const s = stack();
-    compose(Queue, [{ name: "grant", type: "method", args: [] }]).build(s, "Service");
-    Template.fromStack(s).resourceCountIs("AWS::SQS::Queue", 1);
+    compose(Queue, [
+      {
+        name: "visibility",
+        type: "property",
+        value: (_r) => ({ visibilityTimeout: Duration.seconds(90) }),
+      },
+    ]).build(s, "Service");
+    Template.fromStack(s).hasResourceProperties("AWS::SQS::Queue", {
+      VisibilityTimeout: 90,
+    });
+  });
+
+  test("property trait value function receives later-declared siblings in the resources map", () => {
+    const s = stack();
+    let resolvedBucket: unknown;
+
+    compose(Queue, [
+      {
+        name: "peer",
+        type: "property",
+        value: (r) => {
+          resolvedBucket = r.get("Bucket");
+          return {};
+        },
+      },
+    ])
+      .and(Bucket)
+      .build(s, "Service");
+
+    expect(resolvedBucket).toBeInstanceOf(Bucket);
+  });
+
+  test("method traits call the named method with resolved args", () => {
+    const s = stack();
+    compose(Bucket, [
+      {
+        name: "addLifecycleRule",
+        type: "method",
+        args: (_r) => [{ expiration: Duration.days(30) }],
+      },
+    ]).build(s, "Service");
+    Template.fromStack(s).hasResourceProperties("AWS::S3::Bucket", {
+      LifecycleConfiguration: {
+        Rules: Match.arrayWith([Match.objectLike({ Status: "Enabled" })]),
+      },
+    });
+  });
+
+  test("method traits receive the resources map keyed by class name", () => {
+    const s = stack();
+    let captured: Map<string, unknown> | undefined;
+
+    compose(Queue, [
+      {
+        name: "addToResourcePolicy",
+        type: "method",
+        args: (resources) => {
+          captured = resources as Map<string, unknown>;
+          return [{ addStatements: () => {} }];
+        },
+      },
+    ])
+      .and(Bucket)
+      .build(s, "Service");
+
+    expect(captured).toBeInstanceOf(Map);
+    expect(captured?.has("Queue")).toBe(true);
+    expect(captured?.has("Bucket")).toBe(true);
+  });
+
+  test("method traits are applied latest-first", () => {
+    const s = stack();
+    const order: number[] = [];
+
+    compose(Queue, [
+      {
+        name: "addToResourcePolicy",
+        type: "method",
+        args: (_r) => {
+          order.push(1);
+          return [{ addStatements: () => {} }];
+        },
+      },
+    ])
+      .and(Bucket, [
+        {
+          name: "addToResourcePolicy",
+          type: "method",
+          args: (_r) => {
+            order.push(2);
+            return [{ addStatements: () => {} }];
+          },
+        },
+      ])
+      .build(s, "Service");
+
+    // Bucket (.and second) should run before Queue (compose first).
+    expect(order).toEqual([2, 1]);
   });
 
   test("and() is immutable — returns a new Composition each time", () => {
