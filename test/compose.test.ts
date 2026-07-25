@@ -4,6 +4,7 @@ import { Bucket } from "aws-cdk-lib/aws-s3";
 import { Queue } from "aws-cdk-lib/aws-sqs";
 import { describe, expect, test } from "bun:test";
 import { Composition, compose } from "../src/compose";
+import type { ActionTrait } from "../src/compose";
 
 function stack() {
   return new Stack(new App(), "Stack");
@@ -138,6 +139,50 @@ describe("compose", () => {
       .build(s, "Service");
 
     // Bucket (.and second) should run before Queue (compose first).
+    expect(order).toEqual([2, 1]);
+  });
+
+  test("action traits run with the construct and full resources map", () => {
+    const s = stack();
+    let capturedConstruct: unknown;
+    let capturedResources: Map<string, unknown> | undefined;
+
+    const inspect: ActionTrait = {
+      name: "inspect-queue",
+      type: "action",
+      run: (c, r) => {
+        capturedConstruct = c;
+        capturedResources = r as Map<string, unknown>;
+      },
+    };
+
+    compose(Queue, [inspect]).and(Bucket).build(s, "Service");
+
+    expect(capturedConstruct).toBeInstanceOf(Queue);
+    expect(capturedResources?.has("Queue")).toBe(true);
+    expect(capturedResources?.has("Bucket")).toBe(true);
+  });
+
+  test("action traits fire latest-first alongside method traits", () => {
+    const s = stack();
+    const order: number[] = [];
+
+    compose(Queue, [
+      {
+        name: "addToResourcePolicy",
+        type: "method",
+        args: (_r) => { order.push(1); return [{ addStatements: () => {} }]; },
+      },
+    ])
+      .and(Bucket, [
+        {
+          name: "inspect-bucket",
+          type: "action",
+          run: (_c, _r) => { order.push(2); },
+        },
+      ])
+      .build(s, "Service");
+
     expect(order).toEqual([2, 1]);
   });
 
