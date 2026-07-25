@@ -76,8 +76,9 @@ export class Composition {
    * same class appears more than once, a numeric suffix is appended starting at
    * `1` (`Queue`, `Queue1`, `Queue2`, …).
    *
-   * **`property` traits** — their `value` objects are shallow-merged left-to-right
-   * into the construct's props before instantiation. Later traits win on key collisions.
+   * **`property` traits** — their `value` objects are shallow-merged into the
+   * construct's props before instantiation. Later traits in the array win on key
+   * collisions (last wins).
    *
    * **`method` traits** — declared but not yet applied.
    *

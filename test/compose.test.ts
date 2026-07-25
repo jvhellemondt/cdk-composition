@@ -28,7 +28,7 @@ describe("compose", () => {
     });
   });
 
-  test("multiple property traits are merged left-to-right", () => {
+  test("later property traits win on key collisions", () => {
     const s = stack();
     compose(Queue, [
       { name: "first", type: "property", value: { visibilityTimeout: Duration.seconds(30) } },
