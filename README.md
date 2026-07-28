@@ -28,10 +28,24 @@ Traits are **named, typed values defined outside the composition**. They live in
 
 `build()` materialises the composition in two phases:
 
-1. **Instantiation** — constructs are created in *reverse* declaration order so that later-declared siblings are already in the resources map when earlier entries' property functions run.
+1. **Instantiation** — constructs are created in *reverse* declaration order so that later-declared siblings are already available when earlier entries' property functions run.
 2. **Deferred traits** — method and action traits are applied in the order collected during phase 1 (latest-declared first).
 
-Constructs are named by their class name. Duplicates get a numeric suffix (`Queue`, `Queue1`, …).
+`build()` returns the constructs typed and in declaration order, so nothing needs to be looked up afterwards:
+
+```ts
+const { constructs: [fn, queue] } = compose(Function, [nodeRuntime])
+  .and(Queue)
+  .build(this, "Worker");
+
+queue.grantSendMessages(fn); // fully typed
+```
+
+Entries are named by their class name, with a numeric suffix on repeats (`Queue`, `Queue1`, …). Pass a third argument to `compose`/`and` to set the id yourself — worth doing when you want a stable, meaningful logical id:
+
+```ts
+compose(Queue, [], "Inbox").and(Queue, [], "Outbox").build(this, "Mail");
+```
 
 ---
 
@@ -41,7 +55,11 @@ Constructs are named by their class name. Duplicates get a numeric suffix (`Queu
 
 Merges configuration into a construct's props before it is instantiated.
 
-`value` is a plain object for static configuration, or a function when a prop needs to reference a sibling construct. Because phase 1 runs in reverse declaration order, any sibling declared *after* the current entry is already in the resources map when the function runs.
+`value` is a plain object for static configuration, or a function when a prop needs to reference a sibling construct. Because phase 1 runs in reverse declaration order, any sibling declared *after* the current entry is already built when the function runs — `resources.of()` throws with that hint if it is not.
+
+Use the function form for anything stateful (`Code.fromAsset`, for instance). The object form is shared across every `build()`, and CDK rejects a second binding.
+
+Property traits merge left-to-right, later traits winning. Plain objects merge deeply, so separate traits can each contribute part of a nested prop; arrays and class instances are replaced outright.
 
 ```ts
 // traits/queue.ts
@@ -58,7 +76,7 @@ export const thirtySecondVisibility: PropertyTrait = {
 export const withDeadLetterQueue: PropertyTrait = {
   name: "dead-letter-queue",
   type: "property",
-  value: (r) => ({ deadLetterQueue: r.get("Queue") }),
+  value: (r) => ({ deadLetterQueue: { queue: r.of(Queue), maxReceiveCount: 3 } }),
 };
 ```
 
@@ -69,7 +87,9 @@ compose(Function, [withDeadLetterQueue])
   .build(this, "Worker");
 ```
 
-Multiple property traits are merged left-to-right; later traits win on key collisions. Apply a base trait and override specific keys with a more specific one — no subclassing required.
+Apply a base trait and override specific keys with a more specific one — no subclassing required.
+
+Note that props are checked individually but not collectively: because each trait contributes a `Partial`, a composition that never supplies a *required* prop still compiles and fails at synth with CDK's own error.
 
 ---
 
@@ -77,7 +97,9 @@ Multiple property traits are merged left-to-right; later traits win on key colli
 
 Calls a named method on the construct after all siblings are instantiated.
 
-Use this for configuration that requires a method call rather than props — lifecycle rules, event source mappings, policy grants. The `args` function receives the fully-populated resources map so any sibling can be referenced by name.
+Use this for configuration that requires a method call rather than props — lifecycle rules, event source mappings, policy grants. Both the method name and its arguments are checked against the construct, and `args` receives a lookup covering every sibling.
+
+Overloaded methods resolve to their last overload; TypeScript exposes only that one.
 
 ```ts
 // traits/bucket.ts
@@ -96,7 +118,7 @@ export const ninetyDayExpiry: MethodTrait = {
 export const withSqsEventSource = (batchSize = 10): MethodTrait => ({
   name: "sqs-event-source",
   type: "method",
-  args: (r) => [new SqsEventSource(r.get("Queue") as Queue, { batchSize })],
+  args: (r) => [new SqsEventSource(r.of(Queue), { batchSize })],
 });
 ```
 
@@ -127,7 +149,7 @@ import { HttpApi, HttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import { type ActionTrait } from "cdk-composition";
 
-export const httpRoute = (path: string, method: HttpMethod): ActionTrait => ({
+export const httpRoute = (path: string, method: HttpMethod): ActionTrait<Function> => ({
   name: `http-route-${method.toLowerCase()}-${path}`,
   type: "action",
   run: (fn, _r) => {
@@ -137,7 +159,7 @@ export const httpRoute = (path: string, method: HttpMethod): ActionTrait => ({
     api?.addRoutes({
       path,
       methods: [method],
-      integration: new HttpLambdaIntegration(path, fn as Function),
+      integration: new HttpLambdaIntegration(path, fn),
     });
   },
 });
@@ -179,16 +201,16 @@ export const nodeRuntime: PropertyTrait = {
 export const withDeadLetterQueue: PropertyTrait = {
   name: "dead-letter-queue",
   type: "property",
-  value: (r) => ({ deadLetterQueue: r.get("Queue") }),
+  value: (r) => ({ deadLetterQueue: { queue: r.of(Queue), maxReceiveCount: 3 } }),
 };
 
-export const withSqsEventSource = (batchSize = 10): MethodTrait => ({
+export const withSqsEventSource = (batchSize = 10): MethodTrait<Function> => ({
   name: "sqs-event-source",
   type: "method",
-  args: (r) => [new SqsEventSource(r.get("Queue") as Queue, { batchSize })],
+  args: (r) => [new SqsEventSource(r.of(Queue), { batchSize })],
 });
 
-export const statusRoute = (path: string): ActionTrait => ({
+export const statusRoute = (path: string): ActionTrait<Function> => ({
   name: `status-route-${path}`,
   type: "action",
   run: (fn, _r) => {
@@ -198,7 +220,7 @@ export const statusRoute = (path: string): ActionTrait => ({
     api?.addRoutes({
       path,
       methods: [HttpMethod.GET],
-      integration: new HttpLambdaIntegration(path, fn as Function),
+      integration: new HttpLambdaIntegration(path, fn),
     });
   },
 });
@@ -232,24 +254,35 @@ The stack file says what exists and what it can do. The trait file says how each
 
 ## API
 
-### `compose(ctor, traits?)`
+### `compose(ctor, traits?, id?)`
 
-Starts a new `Composition` with one entry. Returns the `Composition`.
+Starts a new `Composition` with one entry. `id` defaults to the construct's class name.
 
-### `Composition.and(ctor, traits?)`
+### `Composition.and(ctor, traits?, id?)`
 
 Appends a sibling entry. Returns a **new** `Composition` — the original is unchanged.
 
 ### `Composition.build(scope, id)`
 
-Materialises the composition under `scope` with the given CDK id. Returns the root `Construct`.
+Materialises the composition under `scope`. Returns `{ root, constructs, resources }`, where `constructs` is a typed tuple in declaration order.
+
+### `Resources`
+
+Passed to trait callbacks and returned from `build()`.
+
+| Member | Returns |
+|--------|---------|
+| `of(Class)` | The single construct of that class. Throws if absent or ambiguous. |
+| `all(Class)` | Every construct of that class, in declaration order. |
+| `get(id)` / `has(id)` | Lookup by id. |
+| `values()` | Every construct created so far. |
 
 ### Trait types
 
 | Type | Purpose | Runs |
 |------|---------|------|
-| `PropertyTrait` | Merges props before instantiation. `value` is a plain object or `(resources) => object`. | Phase 1, during instantiation |
-| `MethodTrait` | Calls a named method. `args` is `(resources) => unknown[]`. | Phase 2, latest-declared first |
-| `ActionTrait` | Runs arbitrary logic. `run` receives the construct and full resources map. | Phase 2, latest-declared first |
+| `PropertyTrait<Props>` | Merges props before instantiation. `value` is a plain object or `(resources) => object`. | Phase 1, during instantiation |
+| `MethodTrait<Construct>` | Calls a method. Name and arguments are both checked. | Phase 2, latest-declared first |
+| `ActionTrait<Construct>` | Runs arbitrary logic. `run` receives the concrete construct and the lookup. | Phase 2, latest-declared first |
 
 All traits carry a `name` field. It has no functional effect — it documents intent and is the unit of granularity at code review.

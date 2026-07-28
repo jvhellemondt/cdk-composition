@@ -7,8 +7,9 @@ import type { ActionTrait } from "../../../../src";
 /**
  * For: `Function` (AWS::Lambda::Function)
  *
- * Registers `GET {path}` on the `HttpApi` found in the surrounding stack, so
- * the Lambda composition needs no reference to the gateway composition.
+ * Registers `GET {path}` on the `HttpApi` found in the surrounding stack. The
+ * API lives in a different composition, so this searches the CDK tree rather
+ * than the resources lookup, keeping the Lambda composition self-contained.
  */
 export const healthRoute = (path: string): ActionTrait<LambdaFunction> => ({
   name: `health-route-${path}`,
