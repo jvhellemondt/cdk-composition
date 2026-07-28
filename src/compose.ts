@@ -1,7 +1,8 @@
 import { Construct } from "constructs";
 
-// CDK construct props are class-specific types with no shared base; `any` is
-// the minimal escape hatch needed to build a generic factory over them.
+// `any` is the only props type that satisfies TypeScript's contravariant
+// construct-signature check for every CDK class. `unknown` and `object` were
+// tested and rejected. See docs/rules/no-any.md for the full explanation.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Ctor<C extends Construct = Construct> = new (scope: Construct, id: string, props: any) => C;
 
