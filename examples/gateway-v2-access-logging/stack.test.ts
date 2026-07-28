@@ -41,6 +41,11 @@ describe("gateway-v2-access-logging", () => {
     expect(asset).toContain("export const handler");
   });
 
+  test("outputs the stage URL, taken from the typed build result", () => {
+    const t = setup();
+    t.hasOutput("ApiUrl", { Value: Match.anyValue() });
+  });
+
   test("stage auto-deploys", () => {
     const t = setup();
     t.hasResourceProperties("AWS::ApiGatewayV2::Stage", {

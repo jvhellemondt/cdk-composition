@@ -1,7 +1,11 @@
 import { HttpApi, type HttpApiProps, HttpStage, type HttpStageProps } from "aws-cdk-lib/aws-apigatewayv2";
+import { Duration } from "aws-cdk-lib";
+import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { LogGroup, type LogGroupProps, RetentionDays } from "aws-cdk-lib/aws-logs";
+import { Bucket } from "aws-cdk-lib/aws-s3";
 import { Queue, type QueueProps } from "aws-cdk-lib/aws-sqs";
 import { expect, test, describe } from "bun:test";
+import type { Construct } from "constructs";
 import { compose } from "../src/compose";
 import type { PropsOf } from "../src/compose";
 
@@ -26,6 +30,8 @@ type _P3 = Expect<Equals<PropsOf<typeof LogGroup>, LogGroupProps>>;
 type _P4 = Expect<Equals<PropsOf<typeof HttpApi>, HttpApiProps>>;
 
 // --- The native InstanceType works against the ConstructClass bound ---
+declare const scope: Construct;
+
 type _I1 = Expect<Equals<InstanceType<typeof Queue>, Queue>>;
 type _I2 = Expect<Equals<InstanceType<typeof HttpStage>, HttpStage>>;
 
@@ -65,11 +71,46 @@ function _assertions() {
   ]);
 
   // Method names are checked against the construct's callable members.
-  compose(Queue, [{ name: "addToResourcePolicy", type: "method", args: () => [] }]);
+  compose(Queue, [
+    { name: "addToResourcePolicy", type: "method", args: () => [new PolicyStatement()] },
+  ]);
 
   compose(Queue, [
     // @ts-expect-error - `addToResourcePolicee` is not a method on Queue
-    { name: "addToResourcePolicee", type: "method", args: () => [] },
+    { name: "addToResourcePolicee", type: "method", args: () => [new PolicyStatement()] },
+  ]);
+
+  // Method arguments are checked against the method's signature.
+  compose(Queue, [
+    // @ts-expect-error - addToResourcePolicy takes one argument, not zero
+    { name: "addToResourcePolicy", type: "method", args: () => [] },
+  ]);
+
+  compose(Bucket, [
+    // @ts-expect-error - addLifecycleRule takes a LifecycleRule
+    { name: "addLifecycleRule", type: "method", args: () => [{ nonsense: true }] },
+  ]);
+
+  compose(Bucket, [
+    { name: "addLifecycleRule", type: "method", args: () => [{ expiration: Duration.days(30) }] },
+  ]);
+
+  // Resources lookups are typed by class, so no casts are needed.
+  compose(Queue, [
+    {
+      name: "typed-lookup",
+      type: "property",
+      value: (r) => ({ deadLetterQueue: { queue: r.of(Queue), maxReceiveCount: 3 } }),
+    },
+  ]);
+
+  compose(Queue, [
+    {
+      name: "lookup-is-typed",
+      type: "action",
+      // @ts-expect-error - resources.of(Bucket) is a Bucket, which has no queueArn
+      run: (_q, r) => void r.of(Bucket).queueArn,
+    },
   ]);
 
   // Action traits receive the concrete construct — no cast needed.
@@ -103,6 +144,13 @@ function _assertions() {
   }
   // @ts-expect-error - not a Construct subclass
   compose(NotAConstruct);
+
+  // build() hands back the constructs typed, in declaration order.
+  const built = compose(Queue).and(Bucket).and(LogGroup).build(scope, "R");
+  const [queue, bucket, logGroup] = built.constructs;
+  const _arns: string[] = [queue.queueArn, bucket.bucketArn, logGroup.logGroupArn];
+  // @ts-expect-error - the tuple has exactly three entries
+  const [, , , _fourth] = built.constructs;
 }
 
 describe("types", () => {
