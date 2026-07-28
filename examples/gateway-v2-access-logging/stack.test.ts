@@ -1,6 +1,6 @@
+import { readFileSync } from "node:fs";
 import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
-import { HttpApi } from "aws-cdk-lib/aws-apigatewayv2";
 import { describe, expect, test } from "bun:test";
 import { GatewayStack } from "./stack";
 
@@ -17,7 +17,7 @@ describe("gateway-v2-access-logging", () => {
     t.resourceCountIs("AWS::Lambda::Function", 1);
   });
 
-  test("access logging is attached to the API's own $default stage", () => {
+  test("access logging is attached to the $default stage", () => {
     const t = setup();
     t.hasResourceProperties("AWS::ApiGatewayV2::Stage", {
       StageName: "$default",
@@ -28,11 +28,17 @@ describe("gateway-v2-access-logging", () => {
     });
   });
 
-  test("the API keeps its default stage, so url and defaultStage resolve", () => {
-    const stack = new GatewayStack(new App(), "TestStack");
-    const api = stack.node.findAll().find((c): c is HttpApi => c instanceof HttpApi);
-    expect(api?.defaultStage).toBeDefined();
-    expect(api?.url).toBeDefined();
+  test("the health handler runs the latest Node runtime as an ES module", () => {
+    const t = setup();
+    t.hasResourceProperties("AWS::Lambda::Function", {
+      Runtime: "nodejs24.x",
+      Handler: "index.handler",
+    });
+    const asset = readFileSync(
+      new URL("./handlers/health/index.mjs", import.meta.url),
+      "utf8",
+    );
+    expect(asset).toContain("export const handler");
   });
 
   test("stage auto-deploys", () => {

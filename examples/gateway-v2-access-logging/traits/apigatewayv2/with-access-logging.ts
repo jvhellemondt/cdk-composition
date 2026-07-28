@@ -1,35 +1,36 @@
-import { AccessLogFormat } from "aws-cdk-lib/aws-apigateway";
-import { CfnStage, type HttpApi } from "aws-cdk-lib/aws-apigatewayv2";
+import { HttpApi, type HttpStageProps, LogGroupLogDestination } from "aws-cdk-lib/aws-apigatewayv2";
 import { LogGroup } from "aws-cdk-lib/aws-logs";
-import type { ActionTrait } from "../../../../src";
+import type { PropertyTrait } from "../../../../src";
 
 /**
- * For: `HttpApi` (AWS::ApiGatewayV2::Api)
+ * For: `HttpStage` (AWS::ApiGatewayV2::Stage)
  *
- * Sends access logs from the API's own `$default` stage to a `LogGroup`
- * declared as a sibling in the same composition.
+ * Points the stage at a sibling `LogGroup` for access logs. With no explicit
+ * `stageName`, `HttpStage` builds the API's `$default` stage.
  *
- * `HttpApiProps` has no access-logging option and `IHttpStage` exposes no L2
- * setter for it, so this reaches the underlying `CfnStage`. That escape hatch
- * is deliberately confined to this one trait.
+ * Resolves both siblings from the resources map, so they must be declared
+ * *after* `HttpStage` in the chain — entries are instantiated in reverse
+ * declaration order, and this runs during instantiation.
  */
-export const withAccessLogging: ActionTrait<HttpApi> = {
+export const withAccessLogging: PropertyTrait<HttpStageProps> = {
   name: "access-logging",
-  type: "action",
-  run: (api, resources) => {
-    const logGroup = [...resources.values()].find((c): c is LogGroup => c instanceof LogGroup);
+  type: "property",
+  value: (resources) => {
+    const siblings = [...resources.values()];
+    const httpApi = siblings.find((c): c is HttpApi => c instanceof HttpApi);
+    const logGroup = siblings.find((c): c is LogGroup => c instanceof LogGroup);
+
+    if (!httpApi) {
+      throw new Error("withAccessLogging expects an HttpApi declared after HttpStage");
+    }
     if (!logGroup) {
-      throw new Error("withAccessLogging expects a LogGroup sibling in the composition");
+      throw new Error("withAccessLogging expects a LogGroup declared after HttpStage");
     }
 
-    const stage = api.defaultStage?.node.defaultChild as CfnStage | undefined;
-    if (!stage) {
-      throw new Error("withAccessLogging expects the HttpApi to create its default stage");
-    }
-
-    stage.accessLogSettings = {
-      destinationArn: logGroup.logGroupArn,
-      format: AccessLogFormat.jsonWithStandardFields().toString(),
+    return {
+      httpApi,
+      autoDeploy: true,
+      accessLogSettings: { destination: new LogGroupLogDestination(logGroup) },
     };
   },
 };
