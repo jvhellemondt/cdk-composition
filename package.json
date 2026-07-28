@@ -13,7 +13,12 @@
     "test:watch": "bun test --watch --timeout 30000",
     "lint": "oxlint src test",
     "format": "oxfmt src test",
-    "format:check": "oxfmt --check src test"
+    "format:check": "oxfmt --check src test",
+    "localstack:up": "docker compose -f examples/gateway-v2-access-logging/docker-compose.yml up -d",
+    "localstack:down": "docker compose -f examples/gateway-v2-access-logging/docker-compose.yml down -v",
+    "localstack:bootstrap": "AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 cdklocal bootstrap",
+    "localstack:deploy": "AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 cdklocal deploy --require-approval never",
+    "localstack:destroy": "AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 cdklocal destroy --force"
   },
   "peerDependencies": {
     "aws-cdk-lib": "^2.0.0",
@@ -24,7 +29,9 @@
     "bun": ">=1.0.0"
   },
   "devDependencies": {
+    "aws-cdk": "^2.262.0",
     "aws-cdk-lib": "^2.262.0",
+    "aws-cdk-local": "^2.0.0",
     "bun-types": "^1.3.14",
     "constructs": "^10.3.0",
     "oxfmt": "^0.60.0",
