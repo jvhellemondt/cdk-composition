@@ -1,3 +1,4 @@
+import { Stack } from "aws-cdk-lib";
 import {
   HttpApi,
   HttpMethod,
@@ -49,12 +50,16 @@ export const healthHandler: PropertyTrait = {
   },
 };
 
+// Locates the HttpApi anywhere in the stack so the Lambda composition stays
+// self-contained — no shared state or cross-composition imports required.
 export const healthRoute = (path: string): ActionTrait => ({
   name: `health-route-${path}`,
   type: "action",
-  run: (fn, r) => {
-    const api = r.get("HttpApi") as HttpApi;
-    api.addRoutes({
+  run: (fn, _r) => {
+    const api = Stack.of(fn).node
+      .findAll()
+      .find((c): c is HttpApi => c instanceof HttpApi);
+    api?.addRoutes({
       path,
       methods: [HttpMethod.GET],
       integration: new HttpLambdaIntegration(`${path}-integration`, fn as LambdaFunction),

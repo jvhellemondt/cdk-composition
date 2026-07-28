@@ -12,15 +12,20 @@ import {
 } from "./traits";
 
 // Instantiation order (reverse declaration):
-//   LogGroup → HttpApi → HttpStage → LambdaFunction
+//   LogGroup → HttpApi → HttpStage
 //
 // By the time HttpStage's withAccessLogging trait runs, both HttpApi and
-// LogGroup are already in the resources map, so the function form of the
-// trait can reference them safely.
+// LogGroup are already in the resources map.
 export function buildGateway(scope: Construct, id: string): Construct {
-  return compose(LambdaFunction, [healthHandler, healthRoute("/health")])
-    .and(HttpStage, [withAccessLogging])
+  return compose(HttpStage, [withAccessLogging])
     .and(HttpApi, [noDefaultStage])
     .and(LogGroup, [oneWeekRetention])
+    .build(scope, id);
+}
+
+// Independent composition — healthRoute finds the HttpApi via Stack.of()
+// rather than through the resources map, so this stays self-contained.
+export function buildHealthLambda(scope: Construct, id: string): Construct {
+  return compose(LambdaFunction, [healthHandler, healthRoute("/health")])
     .build(scope, id);
 }
