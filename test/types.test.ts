@@ -3,7 +3,7 @@ import { LogGroup, type LogGroupProps, RetentionDays } from "aws-cdk-lib/aws-log
 import { Queue, type QueueProps } from "aws-cdk-lib/aws-sqs";
 import { expect, test, describe } from "bun:test";
 import { compose } from "../src/compose";
-import type { InstanceOf, PropsOf } from "../src/compose";
+import type { PropsOf } from "../src/compose";
 
 /**
  * Compile-time assertions for the public typing.
@@ -25,9 +25,9 @@ type _P2 = Expect<Equals<PropsOf<typeof Queue>, QueueProps>>;
 type _P3 = Expect<Equals<PropsOf<typeof LogGroup>, LogGroupProps>>;
 type _P4 = Expect<Equals<PropsOf<typeof HttpApi>, HttpApiProps>>;
 
-// --- InstanceOf infers the construct instance type ---
-type _I1 = Expect<Equals<InstanceOf<typeof Queue>, Queue>>;
-type _I2 = Expect<Equals<InstanceOf<typeof HttpStage>, HttpStage>>;
+// --- The native InstanceType works against the ConstructClass bound ---
+type _I1 = Expect<Equals<InstanceType<typeof Queue>, Queue>>;
+type _I2 = Expect<Equals<InstanceType<typeof HttpStage>, HttpStage>>;
 
 // Never executed — present only so the compiler checks it.
 function _assertions() {

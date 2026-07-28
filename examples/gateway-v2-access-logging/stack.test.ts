@@ -1,6 +1,7 @@
 import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
-import { describe, test } from "bun:test";
+import { HttpApi } from "aws-cdk-lib/aws-apigatewayv2";
+import { describe, expect, test } from "bun:test";
 import { GatewayStack } from "./stack";
 
 describe("gateway-v2-access-logging", () => {
@@ -16,13 +17,22 @@ describe("gateway-v2-access-logging", () => {
     t.resourceCountIs("AWS::Lambda::Function", 1);
   });
 
-  test("stage has access logging pointing at the log group", () => {
+  test("access logging is attached to the API's own $default stage", () => {
     const t = setup();
     t.hasResourceProperties("AWS::ApiGatewayV2::Stage", {
+      StageName: "$default",
       AccessLogSettings: Match.objectLike({
         DestinationArn: Match.anyValue(),
+        Format: Match.anyValue(),
       }),
     });
+  });
+
+  test("the API keeps its default stage, so url and defaultStage resolve", () => {
+    const stack = new GatewayStack(new App(), "TestStack");
+    const api = stack.node.findAll().find((c): c is HttpApi => c instanceof HttpApi);
+    expect(api?.defaultStage).toBeDefined();
+    expect(api?.url).toBeDefined();
   });
 
   test("stage auto-deploys", () => {

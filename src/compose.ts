@@ -12,30 +12,18 @@ import { Construct } from "constructs";
  */
 export type ConstructClass = new (...args: never[]) => Construct;
 
-/** The construct instance type a construct class produces. */
-export type InstanceOf<T extends ConstructClass> = T extends new (...args: never[]) => infer C
-  ? C
-  : never;
+/**
+ * The props type a construct class accepts — its third constructor parameter.
+ * `NonNullable` strips the `| undefined` that optional-props classes carry.
+ *
+ * For the construct instance type, use TypeScript's built-in `InstanceType<T>`.
+ */
+export type PropsOf<T extends ConstructClass> = NonNullable<ConstructorParameters<T>[2]>;
 
 /**
- * The props type a construct class accepts, inferred from its constructor.
- *
- * `props` is *required* in the pattern deliberately. A constructor whose props
- * are optional (`Queue`, `LogGroup`, `HttpApi`) still matches — it can be called
- * with three arguments — whereas the reverse does not hold: making the pattern
- * optional silently resolves to `never` for required-props classes like
- * `HttpStage` and `Function`. `NonNullable` strips the `| undefined` that
- * optional-props classes carry through the inference.
+ * The names of callable members on a construct — used to type-check method
+ * traits. TypeScript ships no built-in for "keys whose values are functions".
  */
-export type PropsOf<T extends ConstructClass> = T extends new (
-  scope: Construct,
-  id: string,
-  props: infer P,
-) => Construct
-  ? NonNullable<P>
-  : never;
-
-/** The names of callable members on a construct — used to type-check method traits. */
 export type MethodKeys<C> = {
   [K in keyof C]: C[K] extends (...args: never[]) => unknown ? K : never;
 }[keyof C] &
@@ -146,7 +134,7 @@ interface PendingDeferred {
  */
 function toEntry<T extends ConstructClass>(
   ctor: T,
-  traits: ReadonlyArray<Trait<PropsOf<T>, InstanceOf<T>>>,
+  traits: ReadonlyArray<Trait<PropsOf<T>, InstanceType<T>>>,
 ): Entry {
   return {
     ctor: ctor as unknown as ErasedConstructClass,
@@ -180,7 +168,7 @@ export class Composition {
   /** @internal */
   static of<T extends ConstructClass>(
     ctor: T,
-    traits: ReadonlyArray<Trait<PropsOf<T>, InstanceOf<T>>> = [],
+    traits: ReadonlyArray<Trait<PropsOf<T>, InstanceType<T>>> = [],
   ): Composition {
     return new Composition([toEntry(ctor, traits)]);
   }
@@ -194,7 +182,7 @@ export class Composition {
    */
   and<T extends ConstructClass>(
     ctor: T,
-    traits: ReadonlyArray<Trait<PropsOf<T>, InstanceOf<T>>> = [],
+    traits: ReadonlyArray<Trait<PropsOf<T>, InstanceType<T>>> = [],
   ): Composition {
     return new Composition([...this.#entries, toEntry(ctor, traits)]);
   }
@@ -298,7 +286,7 @@ export class Composition {
  */
 export function compose<T extends ConstructClass>(
   ctor: T,
-  traits: ReadonlyArray<Trait<PropsOf<T>, InstanceOf<T>>> = [],
+  traits: ReadonlyArray<Trait<PropsOf<T>, InstanceType<T>>> = [],
 ): Composition {
   return Composition.of(ctor, traits);
 }
