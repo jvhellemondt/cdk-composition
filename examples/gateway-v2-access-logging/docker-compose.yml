@@ -1,0 +1,20 @@
+services:
+  localstack:
+    image: localstack/localstack:4
+    ports:
+      - "127.0.0.1:4566:4566"
+    environment:
+      SERVICES: lambda,apigatewayv2,logs,s3,cloudformation,sts,iam
+      LAMBDA_DOCKER_NETWORK: bridge
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - localstack-data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  localstack-data:
