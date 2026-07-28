@@ -1,46 +1,98 @@
 import { Construct } from "constructs";
 
-// `any` is the only props type that satisfies TypeScript's contravariant
-// construct-signature check for every CDK class. `unknown` and `object` were
-// tested and rejected. See docs/rules/no-any.md for the full explanation.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Ctor<C extends Construct = Construct> = new (scope: Construct, id: string, props: any) => C;
+/**
+ * Structural upper bound for CDK construct classes.
+ *
+ * `never[]` in the rest position is what makes this work without `any`:
+ * constructor parameters are checked *contravariantly*, and `never` is
+ * assignable to every type, so every concrete construct class matches this
+ * bound regardless of the props type it declares. A fixed props type here
+ * (`unknown`, `object`, `Record<string, unknown>`) would reject every CDK
+ * class, because none of them accept a wider props type than their own.
+ */
+export type ConstructClass = new (...args: never[]) => Construct;
+
+/** The construct instance type a construct class produces. */
+export type InstanceOf<T extends ConstructClass> = T extends new (...args: never[]) => infer C
+  ? C
+  : never;
+
+/**
+ * The props type a construct class accepts, inferred from its constructor.
+ *
+ * `props` is *required* in the pattern deliberately. A constructor whose props
+ * are optional (`Queue`, `LogGroup`, `HttpApi`) still matches — it can be called
+ * with three arguments — whereas the reverse does not hold: making the pattern
+ * optional silently resolves to `never` for required-props classes like
+ * `HttpStage` and `Function`. `NonNullable` strips the `| undefined` that
+ * optional-props classes carry through the inference.
+ */
+export type PropsOf<T extends ConstructClass> = T extends new (
+  scope: Construct,
+  id: string,
+  props: infer P,
+) => Construct
+  ? NonNullable<P>
+  : never;
+
+/** The names of callable members on a construct — used to type-check method traits. */
+export type MethodKeys<C> = {
+  [K in keyof C]: C[K] extends (...args: never[]) => unknown ? K : never;
+}[keyof C] &
+  string;
+
+/**
+ * Internal erased constructor. By `build` time all property traits have been
+ * merged into a single plain object, so this is the honest shape of the call.
+ * Entries reach it via `as unknown as` — never `any`.
+ */
+type ErasedConstructClass = new (
+  scope: Construct,
+  id: string,
+  props: Record<string, unknown>,
+) => Construct;
 
 /**
  * Declares a prop (or set of props) to merge into the construct's props before
  * instantiation. `name` is a human-readable label and has no functional effect.
+ *
+ * `P` is the construct's props type, inferred from the constructor passed to
+ * {@link compose} or {@link Composition.and}, so `value` is checked against the
+ * real CDK props — misspelled or mistyped props are compile errors. `Partial`
+ * because each trait contributes a subset; the merged result supplies the whole.
  *
  * `value` may be a plain object or a function that receives the resources map.
  * Use the function form to reference a later-declared sibling — because entries
  * are instantiated in reverse declaration order, any sibling added via a later
  * `.and()` call is already in the map when the function runs.
  */
-export interface PropertyTrait {
+export interface PropertyTrait<P = object> {
   name: string;
   type: "property";
-  value:
-    | Record<string, unknown>
-    | ((resources: Map<string, Construct>) => Record<string, unknown>);
+  value: Partial<P> | ((resources: Map<string, Construct>) => Partial<P>);
 }
 
 /**
  * Declares a method call to be made on the construct after all siblings are
- * instantiated. `name` is the method name on the construct. `args` receives the
- * fully-populated resources map so any sibling can be referenced by its CDK id.
+ * instantiated. `name` is constrained to the callable members of `C`, so a
+ * misspelled method name is a compile error rather than a runtime crash.
+ *
+ * `args` receives the fully-populated resources map so any sibling can be
+ * referenced by its CDK id.
  *
  * Method traits are applied in latest-declared-first order (matching the reverse
  * instantiation order of phase 1).
  */
-export interface MethodTrait {
-  name: string;
+export interface MethodTrait<C extends Construct = Construct> {
+  name: MethodKeys<C>;
   type: "method";
   args: (resources: Map<string, Construct>) => unknown[];
 }
 
 /**
  * Runs arbitrary logic against the construct after all siblings are instantiated.
- * The type parameter `C` narrows the first argument of `run` to the exact
- * construct class, so implementations can use the concrete API without casting.
+ * `C` is the construct instance type, inferred from the constructor, so `run`
+ * receives the concrete class and can use its API without casting.
  *
  * `run` receives the construct itself and the complete resources map, giving it
  * access to siblings and — via `Stack.of(construct)` — the broader CDK tree.
@@ -65,12 +117,19 @@ export interface ActionTrait<C extends Construct = Construct> {
   run: (construct: C, resources: Map<string, Construct>) => void;
 }
 
-/** A named, typed descriptor that modifies or extends a construct entry. */
-export type Trait<C extends Construct = Construct> = PropertyTrait | MethodTrait | ActionTrait<C>;
+/**
+ * A named, typed descriptor that modifies or extends a construct entry.
+ * `P` is the construct's props type and `C` its instance type; both are
+ * inferred from the constructor at the {@link compose} call site.
+ */
+export type Trait<P = object, C extends Construct = Construct> =
+  | PropertyTrait<P>
+  | MethodTrait<C>
+  | ActionTrait<C>;
 
 /** Internal representation of one entry in the composition graph. */
 interface Entry {
-  readonly ctor: Ctor;
+  readonly ctor: ErasedConstructClass;
   readonly traits: ReadonlyArray<Trait>;
 }
 
@@ -78,6 +137,21 @@ interface Entry {
 interface PendingDeferred {
   readonly construct: Construct;
   readonly trait: MethodTrait | ActionTrait;
+}
+
+/**
+ * Erases an entry's generic parameters for storage in the heterogeneous entry
+ * list. Sound because each entry's traits are only ever applied to the
+ * construct they were type-checked against.
+ */
+function toEntry<T extends ConstructClass>(
+  ctor: T,
+  traits: ReadonlyArray<Trait<PropsOf<T>, InstanceOf<T>>>,
+): Entry {
+  return {
+    ctor: ctor as unknown as ErasedConstructClass,
+    traits: traits as ReadonlyArray<Trait>,
+  };
 }
 
 /**
@@ -104,10 +178,11 @@ export class Composition {
   }
 
   /** @internal */
-  static of<C extends Construct>(ctor: Ctor<C>, traits: Trait<C>[] = []): Composition {
-    // Type-erase `Trait<C>` to `Trait<Construct>` for the heterogeneous entry store.
-    // Safe because this composition will only ever instantiate `C` for these traits.
-    return new Composition([{ ctor, traits: traits as ReadonlyArray<Trait> }]);
+  static of<T extends ConstructClass>(
+    ctor: T,
+    traits: ReadonlyArray<Trait<PropsOf<T>, InstanceOf<T>>> = [],
+  ): Composition {
+    return new Composition([toEntry(ctor, traits)]);
   }
 
   /**
@@ -115,10 +190,13 @@ export class Composition {
    * The original is left unchanged (immutable).
    *
    * @param ctor - The CDK construct class to add as a sibling.
-   * @param traits - Traits to apply to this entry.
+   * @param traits - Traits to apply to this entry, type-checked against `ctor`.
    */
-  and<C extends Construct>(ctor: Ctor<C>, traits: Trait<C>[] = []): Composition {
-    return new Composition([...this.#entries, { ctor, traits: traits as ReadonlyArray<Trait> }]);
+  and<T extends ConstructClass>(
+    ctor: T,
+    traits: ReadonlyArray<Trait<PropsOf<T>, InstanceOf<T>>> = [],
+  ): Composition {
+    return new Composition([...this.#entries, toEntry(ctor, traits)]);
   }
 
   /**
@@ -148,7 +226,7 @@ export class Composition {
     const pending: PendingDeferred[] = [];
 
     // Pre-assign IDs in forward (declaration) order for predictable naming.
-    const seen = new Map<Ctor, number>();
+    const seen = new Map<ErasedConstructClass, number>();
     const assignedIds = this.#entries.map(({ ctor }) => {
       const count = seen.get(ctor) ?? 0;
       seen.set(ctor, count + 1);
@@ -200,6 +278,10 @@ export class Composition {
  * Chain {@link Composition.and} to add siblings, then call
  * {@link Composition.build} to materialise everything under a shared CDK scope.
  *
+ * Traits are type-checked against `ctor`: property values against the
+ * construct's real props type, method names against its callable members, and
+ * action `run` callbacks receive the concrete construct instance.
+ *
  * ```ts
  * compose(Function, [
  *   { name: 'runtime', type: 'property', value: { runtime: Runtime.NODEJS_24_X } },
@@ -212,8 +294,11 @@ export class Composition {
  * ```
  *
  * @param ctor - The CDK construct class to start the composition with.
- * @param traits - Traits to apply to this entry.
+ * @param traits - Traits to apply to this entry, type-checked against `ctor`.
  */
-export function compose<C extends Construct>(ctor: Ctor<C>, traits: Trait<C>[] = []): Composition {
+export function compose<T extends ConstructClass>(
+  ctor: T,
+  traits: ReadonlyArray<Trait<PropsOf<T>, InstanceOf<T>>> = [],
+): Composition {
   return Composition.of(ctor, traits);
 }

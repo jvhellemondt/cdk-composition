@@ -1,15 +1,24 @@
 import { Stack } from "aws-cdk-lib";
 import {
   HttpApi,
+  type HttpApiProps,
   HttpMethod,
+  type HttpStageProps,
   LogGroupLogDestination,
 } from "aws-cdk-lib/aws-apigatewayv2";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
-import { Function as LambdaFunction, Runtime, Code } from "aws-cdk-lib/aws-lambda";
-import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
+import {
+  Code,
+  Function as LambdaFunction,
+  type FunctionProps,
+  Runtime,
+} from "aws-cdk-lib/aws-lambda";
+import { LogGroup, type LogGroupProps, RetentionDays } from "aws-cdk-lib/aws-logs";
 import type { ActionTrait, PropertyTrait } from "../../src";
 
-export const oneWeekRetention: PropertyTrait = {
+// Each trait names the props type it contributes to, so values are checked
+// against the real CDK props — a misspelled or mistyped prop fails to compile.
+export const oneWeekRetention: PropertyTrait<LogGroupProps> = {
   name: "retention-1w",
   type: "property",
   value: { retention: RetentionDays.ONE_WEEK },
@@ -17,7 +26,7 @@ export const oneWeekRetention: PropertyTrait = {
 
 // Suppresses the $default stage that HttpApi creates automatically.
 // Lets us attach an HttpStage with access logging in its place.
-export const noDefaultStage: PropertyTrait = {
+export const noDefaultStage: PropertyTrait<HttpApiProps> = {
   name: "no-default-stage",
   type: "property",
   value: { createDefaultStage: false },
@@ -26,7 +35,7 @@ export const noDefaultStage: PropertyTrait = {
 // Function form: HttpApi and LogGroup are declared after HttpStage in the
 // composition, so they are already instantiated (reverse-order phase 1) when
 // this value function runs.
-export const withAccessLogging: PropertyTrait = {
+export const withAccessLogging: PropertyTrait<HttpStageProps> = {
   name: "access-logging",
   type: "property",
   value: (r) => ({
@@ -38,7 +47,7 @@ export const withAccessLogging: PropertyTrait = {
   }),
 };
 
-export const healthHandler: PropertyTrait = {
+export const healthHandler: PropertyTrait<FunctionProps> = {
   name: "health-handler",
   type: "property",
   value: {
