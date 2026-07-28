@@ -1,7 +1,9 @@
 import { Construct } from "constructs";
 
+// CDK construct props are class-specific types with no shared base; `any` is
+// the minimal escape hatch needed to build a generic factory over them.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Ctor = new (scope: Construct, id: string, props: any) => Construct;
+type Ctor<C extends Construct = Construct> = new (scope: Construct, id: string, props: any) => C;
 
 /**
  * Declares a prop (or set of props) to merge into the construct's props before
@@ -36,6 +38,9 @@ export interface MethodTrait {
 
 /**
  * Runs arbitrary logic against the construct after all siblings are instantiated.
+ * The type parameter `C` narrows the first argument of `run` to the exact
+ * construct class, so implementations can use the concrete API without casting.
+ *
  * `run` receives the construct itself and the complete resources map, giving it
  * access to siblings and — via `Stack.of(construct)` — the broader CDK tree.
  *
@@ -44,23 +49,23 @@ export interface MethodTrait {
  *
  * @example
  * // Finds the HttpApi anywhere in the stack and wires a route to this Function.
- * const httpRoute = (path: string, method: HttpMethod): ActionTrait => ({
+ * const httpRoute = (path: string, method: HttpMethod): ActionTrait<LambdaFunction> => ({
  *   name: `route-${method.toLowerCase()}-${path}`,
  *   type: "action",
  *   run: (fn, _r) => {
  *     const api = Stack.of(fn).node.findAll().find((c): c is HttpApi => c instanceof HttpApi);
- *     api!.addRoutes({ path, methods: [method], integration: new HttpLambdaIntegration(path, fn as Function) });
+ *     api!.addRoutes({ path, methods: [method], integration: new HttpLambdaIntegration(path, fn) });
  *   },
  * });
  */
-export interface ActionTrait {
+export interface ActionTrait<C extends Construct = Construct> {
   name: string;
   type: "action";
-  run: (construct: Construct, resources: Map<string, Construct>) => void;
+  run: (construct: C, resources: Map<string, Construct>) => void;
 }
 
 /** A named, typed descriptor that modifies or extends a construct entry. */
-export type Trait = PropertyTrait | MethodTrait | ActionTrait;
+export type Trait<C extends Construct = Construct> = PropertyTrait | MethodTrait | ActionTrait<C>;
 
 /** Internal representation of one entry in the composition graph. */
 interface Entry {
@@ -98,8 +103,10 @@ export class Composition {
   }
 
   /** @internal */
-  static of(ctor: Ctor, traits: Trait[] = []): Composition {
-    return new Composition([{ ctor, traits }]);
+  static of<C extends Construct>(ctor: Ctor<C>, traits: Trait<C>[] = []): Composition {
+    // Type-erase `Trait<C>` to `Trait<Construct>` for the heterogeneous entry store.
+    // Safe because this composition will only ever instantiate `C` for these traits.
+    return new Composition([{ ctor, traits: traits as ReadonlyArray<Trait> }]);
   }
 
   /**
@@ -109,8 +116,8 @@ export class Composition {
    * @param ctor - The CDK construct class to add as a sibling.
    * @param traits - Traits to apply to this entry.
    */
-  and(ctor: Ctor, traits: Trait[] = []): Composition {
-    return new Composition([...this.#entries, { ctor, traits }]);
+  and<C extends Construct>(ctor: Ctor<C>, traits: Trait<C>[] = []): Composition {
+    return new Composition([...this.#entries, { ctor, traits: traits as ReadonlyArray<Trait> }]);
   }
 
   /**
@@ -206,6 +213,6 @@ export class Composition {
  * @param ctor - The CDK construct class to start the composition with.
  * @param traits - Traits to apply to this entry.
  */
-export function compose(ctor: Ctor, traits: Trait[] = []): Composition {
+export function compose<C extends Construct>(ctor: Ctor<C>, traits: Trait<C>[] = []): Composition {
   return Composition.of(ctor, traits);
 }

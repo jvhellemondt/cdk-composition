@@ -52,7 +52,7 @@ export const healthHandler: PropertyTrait = {
 
 // Locates the HttpApi anywhere in the stack so the Lambda composition stays
 // self-contained — no shared state or cross-composition imports required.
-export const healthRoute = (path: string): ActionTrait => ({
+export const healthRoute = (path: string): ActionTrait<LambdaFunction> => ({
   name: `health-route-${path}`,
   type: "action",
   run: (fn, _r) => {
@@ -62,7 +62,7 @@ export const healthRoute = (path: string): ActionTrait => ({
     api?.addRoutes({
       path,
       methods: [HttpMethod.GET],
-      integration: new HttpLambdaIntegration(`${path}-integration`, fn as LambdaFunction),
+      integration: new HttpLambdaIntegration(`${path}-integration`, fn),
     });
   },
 });
