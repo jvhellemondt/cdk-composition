@@ -1,6 +1,7 @@
 import { Construct } from "constructs";
 
-type Ctor<P extends object = object> = new (scope: Construct, id: string, props?: P) => Construct;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Ctor = new (scope: Construct, id: string, props: any) => Construct;
 
 /**
  * Declares a prop (or set of props) to merge into the construct's props before
@@ -173,7 +174,7 @@ export class Composition {
     // (latest-declared first), so later siblings are already configured.
     for (const { construct, trait } of pending) {
       if (trait.type === "method") {
-        (construct as Record<string, (...a: unknown[]) => unknown>)[trait.name](
+        (construct as unknown as Record<string, (...a: unknown[]) => unknown>)[trait.name](
           ...trait.args(resources),
         );
       } else {
