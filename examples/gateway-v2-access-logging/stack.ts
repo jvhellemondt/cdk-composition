@@ -1,5 +1,6 @@
-import { Function as LambdaFunction } from "aws-cdk-lib/aws-lambda";
+import { Stack, type StackProps } from "aws-cdk-lib";
 import { HttpApi, HttpStage } from "aws-cdk-lib/aws-apigatewayv2";
+import { Function as LambdaFunction } from "aws-cdk-lib/aws-lambda";
 import { LogGroup } from "aws-cdk-lib/aws-logs";
 import type { Construct } from "constructs";
 import { compose } from "../../src";
@@ -11,21 +12,16 @@ import {
   withAccessLogging,
 } from "./traits";
 
-// Instantiation order (reverse declaration):
-//   LogGroup → HttpApi → HttpStage
-//
-// By the time HttpStage's withAccessLogging trait runs, both HttpApi and
-// LogGroup are already in the resources map.
-export function buildGateway(scope: Construct, id: string): Construct {
-  return compose(HttpStage, [withAccessLogging])
-    .and(HttpApi, [noDefaultStage])
-    .and(LogGroup, [oneWeekRetention])
-    .build(scope, id);
-}
+export class GatewayStack extends Stack {
+  constructor(scope: Construct, id: string, props?: StackProps) {
+    super(scope, id, props);
 
-// Independent composition — healthRoute finds the HttpApi via Stack.of()
-// rather than through the resources map, so this stays self-contained.
-export function buildHealthLambda(scope: Construct, id: string): Construct {
-  return compose(LambdaFunction, [healthHandler, healthRoute("/health")])
-    .build(scope, id);
+    compose(HttpStage, [withAccessLogging])
+      .and(HttpApi, [noDefaultStage])
+      .and(LogGroup, [oneWeekRetention])
+      .build(this, "Gateway");
+
+    compose(LambdaFunction, [healthHandler, healthRoute("/health")])
+      .build(this, "Health");
+  }
 }

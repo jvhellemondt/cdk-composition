@@ -1,14 +1,11 @@
-import { App, Stack } from "aws-cdk-lib";
+import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import { describe, test } from "bun:test";
-import { buildGateway, buildHealthLambda } from "./stack";
+import { GatewayStack } from "./stack";
 
 describe("gateway-v2-access-logging", () => {
   function setup() {
-    const stack = new Stack(new App(), "TestStack");
-    buildGateway(stack, "Gateway");
-    buildHealthLambda(stack, "Health");
-    return Template.fromStack(stack);
+    return Template.fromStack(new GatewayStack(new App(), "TestStack"));
   }
 
   test("creates an HTTP API, stage, access-log group, and health Lambda", () => {
