@@ -42,6 +42,12 @@ export interface Resources {
   all<T extends ConstructClass>(ctor: T): InstanceType<T>[];
   /** The construct created under `id`, if any. */
   get(id: string): Construct | undefined;
+  /**
+   * The construct created under `id`, narrowed to `ctor`. The narrowing is a
+   * real `instanceof` check, so the type is earned rather than asserted — a
+   * construct of a different class reads as `undefined`, same as a missing id.
+   */
+  get<T extends ConstructClass>(id: string, ctor: T): InstanceType<T> | undefined;
   /** Whether a construct exists under `id`. */
   has(id: string): boolean;
   /** Every construct created so far. */
@@ -205,8 +211,12 @@ class ResourceRegistry implements Resources {
     this.#instantiating = false;
   }
 
-  get(id: string): Construct | undefined {
-    return this.#byId.get(id);
+  get(id: string): Construct | undefined;
+  get<T extends ConstructClass>(id: string, ctor: T): InstanceType<T> | undefined;
+  get(id: string, ctor?: ConstructClass): Construct | undefined {
+    const construct = this.#byId.get(id);
+    if (construct === undefined || ctor === undefined) return construct;
+    return construct instanceof ctor ? construct : undefined;
   }
 
   has(id: string): boolean {
