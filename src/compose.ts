@@ -135,18 +135,33 @@ export type Trait<P = object, C extends Construct = Construct> =
   | MethodTrait<C>
   | ActionTrait<C>;
 
-/** What {@link Composition.build} hands back. */
-export interface BuildResult<
+/**
+ * What {@link Composition.build} hands back: the fixed members below, plus one
+ * entry per resource keyed by its id, so a construct can be destructured by
+ * name instead of by position.
+ *
+ * ```ts
+ * const { api, logs } = compose(HttpApi, [], "api").and(LogGroup, [], "logs").build(this, "Gateway");
+ * ```
+ *
+ * Only ids written as literals appear in the type — the same rule `resources.get`
+ * follows, and for the same reason (see {@link Bind}). A defaulted id still keys
+ * the entry at runtime; the compiler just cannot see it.
+ */
+export type BuildResult<
   Ts extends readonly Construct[],
   Ids extends IdMap = Record<never, Construct>,
-> {
+> = {
   /** The scope the entries were created under. */
   readonly root: Construct;
   /** The created constructs, typed and in declaration order. */
   readonly constructs: Ts;
   /** Lookup over the same constructs, typed for the ids declared literally. */
   readonly resources: Resources<Ids>;
-}
+} & Ids;
+
+/** Members of {@link BuildResult} an entry id would shadow, so ids may not use them. */
+const RESERVED_IDS: ReadonlySet<string> = new Set(["root", "constructs", "resources"]);
 
 /** Erased constructor used internally, once props are merged to a plain object. */
 type ErasedConstructClass = new (
@@ -275,8 +290,8 @@ class ResourceRegistry implements Resources {
       throw new Error(
         this.#instantiating
           ? `No ${name} available yet. Entries are instantiated in reverse declaration ` +
-            `order, so a property trait only sees siblings declared after it — move ${name} ` +
-            `later in the chain, or resolve it from a method or action trait instead.`
+              `order, so a property trait only sees siblings declared after it — move ${name} ` +
+              `later in the chain, or resolve it from a method or action trait instead.`
           : `No ${name} in this composition.`,
       );
     }
@@ -300,12 +315,12 @@ function toEntry<T extends ConstructClass>(
  * An immutable description of constructs to create together under one scope.
  * Nothing is instantiated until {@link Composition.build}.
  *
- * `Ts` accumulates the instance types as entries are added, so `build` can hand
- * them back typed.
+ * `Ts` accumulates the instance types as entries are added, and `Ids` the ids
+ * declared literally, so `build` can hand both back typed.
  *
  * @example
- * const { constructs: [fn, queue] } = compose(Function, [nodeRuntime])
- *   .and(Queue)
+ * const { fn, queue } = compose(Function, [nodeRuntime], "fn")
+ *   .and(Queue, [], "queue")
  *   .build(this, "Worker");
  */
 export class Composition<
@@ -337,7 +352,8 @@ export class Composition<
    * @param id - CDK id for this entry. Defaults to the class name, suffixed
    *   when a class appears more than once. Pass one explicitly if the class
    *   name is minified, you want a stable, meaningful logical id, or you want
-   *   `resources.get(id)` typed after {@link Composition.build}.
+   *   the entry typed under that name — both on the {@link BuildResult} itself
+   *   and through `resources.get(id)` — after {@link Composition.build}.
    */
   and<T extends ConstructClass, Id extends string = never>(
     ctor: T,
@@ -368,6 +384,15 @@ export class Composition<
           `Pass an explicit id to distinguish the entries.`,
       );
     }
+
+    const reserved = ids.filter((id) => RESERVED_IDS.has(id));
+    if (reserved.length > 0) {
+      throw new Error(
+        `Reserved ids in composition: ${[...new Set(reserved)].join(", ")}. ` +
+          `build() returns each resource under its own id alongside ` +
+          `${[...RESERVED_IDS].join(", ")}, so those names cannot be used as ids.`,
+      );
+    }
     return ids;
   }
 
@@ -381,7 +406,8 @@ export class Composition<
    * **Phase 2 — deferred traits, same reverse order.** Method and action traits
    * run once every construct exists.
    *
-   * @returns The scope, the constructs in declaration order, and a lookup.
+   * @returns The scope, the constructs in declaration order, a lookup, and each
+   *   construct under its own id.
    */
   build(scope: Construct, id: string): BuildResult<Ts, Ids> {
     const root = new Construct(scope, id);
@@ -427,13 +453,16 @@ export class Composition<
       }
     }
 
+    // Named entries come first, so the fixed members always win a collision —
+    // `#assignIds` already rejects the ids that could cause one.
     return {
+      ...Object.fromEntries(ids.map((entryId, index) => [entryId, instances[index]])),
       root,
       constructs: instances as unknown as Ts,
       // The registry answers `get` honestly at runtime; `Ids` records which of
       // those answers the composition already proved present at build time.
       resources: resources as unknown as Resources<Ids>,
-    };
+    } as BuildResult<Ts, Ids>;
   }
 }
 
