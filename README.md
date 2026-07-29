@@ -31,21 +31,26 @@ Traits are **named, typed values defined outside the composition**. They live in
 1. **Instantiation** — constructs are created in *reverse* declaration order so that later-declared siblings are already available when earlier entries' property functions run.
 2. **Deferred traits** — method and action traits are applied in the order collected during phase 1 (latest-declared first).
 
-`build()` returns the constructs typed and in declaration order, so nothing needs to be looked up afterwards:
+`build()` returns each construct under its own id, plus the same constructs typed and in declaration order, so nothing needs to be looked up afterwards:
 
 ```ts
-const { constructs: [fn, queue] } = compose(Function, [nodeRuntime])
-  .and(Queue)
+const { fn, queue } = compose(Function, [nodeRuntime], "fn")
+  .and(Queue, [], "queue")
   .build(this, "Worker");
 
 queue.grantSendMessages(fn); // fully typed
+
+// Or positionally, when the ids don't matter:
+const { constructs: [handler, jobs] } = compose(Function, [nodeRuntime]).and(Queue).build(this, "Jobs");
 ```
 
-Entries are named by their class name, with a numeric suffix on repeats (`Queue`, `Queue1`, …). Pass a third argument to `compose`/`and` to set the id yourself — worth doing when you want a stable, meaningful logical id:
+Entries are named by their class name, with a numeric suffix on repeats (`Queue`, `Queue1`, …). Pass a third argument to `compose`/`and` to set the id yourself — worth doing when you want a stable, meaningful logical id, or a name to destructure `build()` by:
 
 ```ts
-compose(Queue, [], "Inbox").and(Queue, [], "Outbox").build(this, "Mail");
+const { Inbox, Outbox } = compose(Queue, [], "Inbox").and(Queue, [], "Outbox").build(this, "Mail");
 ```
+
+A defaulted id keys the entry at runtime too, but only ids written as literals are visible to the compiler — see [Why `get` is only sometimes typed](#why-get-is-only-sometimes-typed), which applies to these names for the same reason. `root`, `constructs` and `resources` are the build result's own members, so they are rejected as ids.
 
 ---
 
@@ -264,7 +269,16 @@ Appends a sibling entry. Returns a **new** `Composition` — the original is unc
 
 ### `Composition.build(scope, id)`
 
-Materialises the composition under `scope`. Returns `{ root, constructs, resources }`, where `constructs` is a typed tuple in declaration order.
+Materialises the composition under `scope`. Returns `{ root, constructs, resources, ...entriesById }`:
+
+| Member | Returns |
+|--------|---------|
+| `root` | The scope the entries were created under. |
+| `constructs` | The created constructs as a typed tuple, in declaration order. |
+| `resources` | A `Resources` lookup over the same constructs. |
+| *`<id>`* | The construct created under that id — typed for every id the composition declared literally. |
+
+`root`, `constructs` and `resources` cannot be used as entry ids; `build()` throws if one is.
 
 ### `Resources`
 
@@ -291,7 +305,7 @@ resources.get("AccessLogs").logGroupArn; // LogGroup
 resources.get("Nope");                 // Construct | undefined
 ```
 
-Two cases stay untyped, because the id is genuinely not knowable at compile time:
+Two cases stay untyped — and, for the same reason, absent from the build result's named entries — because the id is genuinely not knowable at compile time:
 
 - **A defaulted id.** It is derived from the class name at runtime; `ctor.name` is `string` for every class, so the type system cannot read `"Queue"` out of `typeof Queue`.
 - **A `string` variable as the id.** Nothing to bind.

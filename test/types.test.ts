@@ -218,6 +218,29 @@ function _assertions() {
   const _arns: string[] = [queue.queueArn, bucket.bucketArn, logGroup.logGroupArn];
   // @ts-expect-error - the tuple has exactly three entries
   const [, , , _fourth] = built.constructs;
+
+  // --- build() also keys each entry by its id, typed for literal ids ---
+  const { Inbox: byName, Store: alsoByName } = named;
+  type _B1 = Expect<Equals<typeof byName, Queue>>;
+  type _B2 = Expect<Equals<typeof alsoByName, Bucket>>;
+  const _byName: string[] = [named.Inbox.queueArn, named.Store.bucketArn];
+
+  // @ts-expect-error - "Inbox" is the Queue, not the Bucket
+  void named.Inbox.bucketArn;
+
+  // @ts-expect-error - an id the composition never declared is not on the result
+  void named.Elsewhere;
+
+  // A defaulted id keys the entry at runtime, but the compiler cannot see it.
+  // @ts-expect-error - nothing was bound, so there is no `Queue` member
+  void defaulted.Queue;
+
+  // The fixed members are always there, whatever the ids.
+  const _fixed: [Construct, readonly Construct[], boolean] = [
+    named.root,
+    named.constructs,
+    named.resources.has("Inbox"),
+  ];
 }
 
 describe("types", () => {

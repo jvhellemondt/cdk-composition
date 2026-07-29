@@ -19,17 +19,16 @@ export class GatewayStack extends Stack {
     // Entries are instantiated in reverse declaration order, so HttpApi and
     // LogGroup exist by the time withAccessLogging resolves them.
     // HttpStage without a stageName is the API's $default stage.
-    const {
-      constructs: [stage],
-    } = compose(HttpStage, [withAccessLogging])
-      .and(HttpApi, [noDefaultStage])
-      .and(LogGroup, [oneWeekRetention])
+    const { Stage: stage } = compose(HttpStage, [withAccessLogging], "Stage")
+      .and(HttpApi, [noDefaultStage], "Api")
+      .and(LogGroup, [oneWeekRetention], "AccessLogs")
       .build(this, "Gateway");
 
     // Independent composition — healthRoute locates the HttpApi via Stack.of().
     compose(LambdaFunction, [healthHandler, healthRoute("/health")]).build(this, "Health");
 
-    // `stage` is typed as HttpStage, straight out of build(). Suppressing the
+    // `stage` is typed as HttpStage, straight out of build() under the id it
+    // was declared with — no lookup, no positional tuple. Suppressing the
     // API's own default stage leaves HttpApi.url undefined, but the stage we
     // built knows its own URL.
     new CfnOutput(this, "ApiUrl", { value: stage.url });

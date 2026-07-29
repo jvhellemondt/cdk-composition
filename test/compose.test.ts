@@ -251,6 +251,15 @@ describe("compose — ids", () => {
       /Duplicate ids/,
     );
   });
+
+  test("rejects ids that would shadow a fixed member of the build result", () => {
+    const s = stack();
+    for (const reserved of ["root", "constructs", "resources"]) {
+      expect(() => compose(Queue, [], reserved).build(s, `Service${reserved}`)).toThrow(
+        /Reserved ids/,
+      );
+    }
+  });
 });
 
 describe("compose — resources lookup", () => {
@@ -375,6 +384,40 @@ describe("compose — build result", () => {
     expect(bucket).toBeInstanceOf(Bucket);
     expect(queue.queueArn).toBeDefined();
     expect(root.node.id).toBe("Service");
+  });
+
+  test("returns each construct under its own id", () => {
+    const s = stack();
+    const { Inbox, Store } = compose(Queue, [], "Inbox")
+      .and(Bucket, [], "Store")
+      .build(s, "Service");
+    expect(Inbox).toBeInstanceOf(Queue);
+    expect(Store).toBeInstanceOf(Bucket);
+    expect(Inbox.queueArn).toBeDefined();
+    expect(Store.bucketArn).toBeDefined();
+  });
+
+  test("keys defaulted ids too, including the suffix on repeats", () => {
+    const s = stack();
+    const built: Record<string, unknown> = compose(Queue).and(Queue).and(Bucket).build(s, "Service");
+    expect(Object.keys(built).toSorted()).toEqual([
+      "Bucket",
+      "Queue",
+      "Queue1",
+      "constructs",
+      "resources",
+      "root",
+    ]);
+    expect(built.Queue1).toBeInstanceOf(Queue);
+  });
+
+  test("the named entries are the same instances as constructs and resources", () => {
+    const s = stack();
+    const built = compose(Queue, [], "Inbox").and(Bucket, [], "Store").build(s, "Service");
+    const [queue, bucket] = built.constructs;
+    expect(built.Inbox).toBe(queue);
+    expect(built.Store).toBe(bucket);
+    expect(built.Inbox).toBe(built.resources.get("Inbox"));
   });
 });
 
