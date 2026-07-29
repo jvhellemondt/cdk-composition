@@ -113,6 +113,42 @@ function _assertions() {
     },
   ]);
 
+  // get(id) is untyped; get(id, Class) is narrowed by the witness.
+  compose(Queue, [
+    {
+      name: "get-is-untyped-without-a-witness",
+      type: "action",
+      // @ts-expect-error - get(id) yields Construct | undefined, which has no queueArn
+      run: (_q, r) => void r.get("Queue").queueArn,
+    },
+  ]);
+
+  compose(Queue, [
+    {
+      name: "get-with-witness-is-typed",
+      type: "action",
+      run: (_q, r) => void r.get("Queue", Queue)?.queueArn,
+    },
+  ]);
+
+  compose(Queue, [
+    {
+      name: "get-witness-picks-the-class",
+      type: "action",
+      // @ts-expect-error - the witness is Bucket, so the result has no queueArn
+      run: (_q, r) => void r.get("Queue", Bucket)?.queueArn,
+    },
+  ]);
+
+  compose(Queue, [
+    {
+      name: "get-result-is-optional",
+      type: "action",
+      // @ts-expect-error - the result may be undefined; it needs narrowing first
+      run: (_q, r) => void r.get("Queue", Queue).queueArn,
+    },
+  ]);
+
   // Action traits receive the concrete construct — no cast needed.
   compose(Queue, [
     {

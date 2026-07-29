@@ -274,7 +274,9 @@ Passed to trait callbacks and returned from `build()`.
 |--------|---------|
 | `of(Class)` | The single construct of that class. Throws if absent or ambiguous. |
 | `all(Class)` | Every construct of that class, in declaration order. |
-| `get(id)` / `has(id)` | Lookup by id. |
+| `get(id)` | The construct under that id, or `undefined`. Typed as `Construct`. |
+| `get(id, Class)` | The same, narrowed to `Class` by an `instanceof` check. A different class reads as `undefined`, same as a missing id. |
+| `has(id)` | Whether an id exists. |
 | `values()` | Every construct created so far. |
 
 ### Trait types

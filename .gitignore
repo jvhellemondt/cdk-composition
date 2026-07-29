@@ -1,7 +1,9 @@
 lib/
 
 # Logs
-logs
+# Anchored: an unanchored `logs` also matches source directories named after
+# the AWS service they group, such as examples/**/traits/logs/.
+/logs/
 *.log
 npm-debug.log*
 yarn-debug.log*

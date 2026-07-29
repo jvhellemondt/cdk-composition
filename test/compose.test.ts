@@ -309,6 +309,34 @@ describe("compose — resources lookup", () => {
       .build(s, "Service");
     expect(count).toBe(2);
   });
+
+  test("get() returns the construct under an id", () => {
+    const s = stack();
+    const { resources } = compose(Queue, [], "Inbox").build(s, "Service");
+    expect(resources.get("Inbox")).toBeInstanceOf(Queue);
+    expect(resources.get("Nope")).toBeUndefined();
+  });
+
+  test("get() narrows to the witness class", () => {
+    const s = stack();
+    const { resources } = compose(Queue, [], "Inbox").and(Bucket, [], "Store").build(s, "Service");
+    expect(resources.get("Inbox", Queue)).toBeInstanceOf(Queue);
+    expect(resources.get("Store", Bucket)).toBeInstanceOf(Bucket);
+  });
+
+  test("get() with a witness treats a class mismatch as a miss", () => {
+    const s = stack();
+    const { resources } = compose(Queue, [], "Inbox").build(s, "Service");
+    expect(resources.get("Inbox", Bucket)).toBeUndefined();
+    expect(resources.get("Nope", Queue)).toBeUndefined();
+  });
+
+  test("get() witnesses accept a base class", () => {
+    class ServiceV2 extends Construct {}
+    const s = stack();
+    const { resources } = compose(ServiceV2).build(s, "Service");
+    expect(resources.get("ServiceV2", Construct)).toBeInstanceOf(ServiceV2);
+  });
 });
 
 describe("compose — prop merging", () => {
