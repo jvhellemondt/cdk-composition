@@ -274,10 +274,29 @@ Passed to trait callbacks and returned from `build()`.
 |--------|---------|
 | `of(Class)` | The single construct of that class. Throws if absent or ambiguous. |
 | `all(Class)` | Every construct of that class, in declaration order. |
-| `get(id)` | The construct under that id, or `undefined`. Typed as `Construct`. |
+| `get(id)` | The construct under that id. Typed as that entry's class — and never `undefined` — for an id the composition declared literally; `Construct \| undefined` otherwise. |
 | `get(id, Class)` | The same, narrowed to `Class` by an `instanceof` check. A different class reads as `undefined`, same as a missing id. |
 | `has(id)` | Whether an id exists. |
 | `values()` | Every construct created so far. |
+
+#### Why `get` is only sometimes typed
+
+A composition tracks the ids it was given, so `build()` can hand them back typed:
+
+```ts
+const { resources } = compose(HttpApi, [], "Api").and(LogGroup, [], "AccessLogs").build(this, "Gateway");
+
+resources.get("Api").apiEndpoint;      // HttpApi — no `?` needed, build() created it
+resources.get("AccessLogs").logGroupArn; // LogGroup
+resources.get("Nope");                 // Construct | undefined
+```
+
+Two cases stay untyped, because the id is genuinely not knowable at compile time:
+
+- **A defaulted id.** It is derived from the class name at runtime; `ctor.name` is `string` for every class, so the type system cannot read `"Queue"` out of `typeof Queue`.
+- **A `string` variable as the id.** Nothing to bind.
+
+Trait callbacks also receive the untyped lookup. A trait is written alongside its own entry, before the rest of the chain exists to be inferred from — and the ids that *are* known by then are precisely the earlier-declared ones, which a property trait cannot reach anyway, since entries are instantiated in reverse. Inside a trait, reach for `of(Class)`: it is typed, and it throws with an explanatory message rather than yielding `undefined`.
 
 ### Trait types
 

@@ -30,18 +30,45 @@ export type MethodKeys<C> = {
 type MethodArgs<C, K extends keyof C> = Parameters<Extract<C[K], (...args: never[]) => unknown>>;
 
 /**
+ * The ids a composition knows statically, mapped to what they hold.
+ *
+ * Empty unless entries were given explicit ids — see {@link Bind}.
+ */
+export type IdMap = Record<string, Construct>;
+
+/**
+ * The binding one entry contributes to the composition's {@link IdMap}.
+ *
+ * Only an id written as a literal binds. A `string` variable is unknowable at
+ * compile time, and a defaulted id is derived from the class name at runtime —
+ * `ctor.name` is typed `string` for every class, so the type system cannot see
+ * it. Both cases contribute nothing and leave `get` at its untyped signature.
+ */
+type Bind<Id extends string, C extends Construct> = string extends Id
+  ? Record<never, Construct>
+  : { [K in Id]: C };
+
+/**
  * Lookup for the constructs a composition has created so far.
  *
- * Prefer {@link Resources.of} over {@link Resources.get}: it is typed, and it
- * throws instead of yielding `undefined` when a construct is missing.
+ * `Ids` carries the ids declared literally in the composition, so `get` can
+ * hand those back typed and non-optional. Trait callbacks receive the default —
+ * an empty map — because a trait is written alongside its own entry, before the
+ * rest of the chain exists to be inferred from. Use {@link Resources.of} there.
  */
-export interface Resources {
+export interface Resources<Ids extends IdMap = Record<never, Construct>> {
   /** The single construct of the given class. Throws if absent or ambiguous. */
   of<T extends ConstructClass>(ctor: T): InstanceType<T>;
   /** Every construct of the given class, in declaration order. */
   all<T extends ConstructClass>(ctor: T): InstanceType<T>[];
-  /** The construct created under `id`, if any. */
-  get(id: string): Construct | undefined;
+  /**
+   * The construct created under `id`.
+   *
+   * An id the composition declared literally resolves to that entry's type and
+   * cannot be `undefined` — `build` created it, so it is there. Any other id
+   * stays `Construct | undefined`.
+   */
+  get<K extends string>(id: K): K extends keyof Ids ? Ids[K] : Construct | undefined;
   /**
    * The construct created under `id`, narrowed to `ctor`. The narrowing is a
    * real `instanceof` check, so the type is earned rather than asserted — a
@@ -109,13 +136,16 @@ export type Trait<P = object, C extends Construct = Construct> =
   | ActionTrait<C>;
 
 /** What {@link Composition.build} hands back. */
-export interface BuildResult<Ts extends readonly Construct[]> {
+export interface BuildResult<
+  Ts extends readonly Construct[],
+  Ids extends IdMap = Record<never, Construct>,
+> {
   /** The scope the entries were created under. */
   readonly root: Construct;
   /** The created constructs, typed and in declaration order. */
   readonly constructs: Ts;
-  /** Lookup over the same constructs. */
-  readonly resources: Resources;
+  /** Lookup over the same constructs, typed for the ids declared literally. */
+  readonly resources: Resources<Ids>;
 }
 
 /** Erased constructor used internally, once props are merged to a plain object. */
@@ -278,7 +308,10 @@ function toEntry<T extends ConstructClass>(
  *   .and(Queue)
  *   .build(this, "Worker");
  */
-export class Composition<Ts extends readonly Construct[] = readonly []> {
+export class Composition<
+  Ts extends readonly Construct[] = readonly [],
+  Ids extends IdMap = Record<never, Construct>,
+> {
   readonly #entries: ReadonlyArray<Entry>;
 
   private constructor(entries: ReadonlyArray<Entry>) {
@@ -286,12 +319,14 @@ export class Composition<Ts extends readonly Construct[] = readonly []> {
   }
 
   /** @internal */
-  static of<T extends ConstructClass>(
+  static of<T extends ConstructClass, Id extends string = never>(
     ctor: T,
     traits: ReadonlyArray<Trait<PropsOf<T>, InstanceType<T>>> = [],
-    id?: string,
-  ): Composition<[InstanceType<T>]> {
-    return new Composition<[InstanceType<T>]>([toEntry(ctor, traits, id)]);
+    id?: Id,
+  ): Composition<[InstanceType<T>], Bind<Id, InstanceType<T>>> {
+    return new Composition<[InstanceType<T>], Bind<Id, InstanceType<T>>>([
+      toEntry(ctor, traits, id),
+    ]);
   }
 
   /**
@@ -301,14 +336,18 @@ export class Composition<Ts extends readonly Construct[] = readonly []> {
    * @param traits - Traits for this entry, checked against `ctor`.
    * @param id - CDK id for this entry. Defaults to the class name, suffixed
    *   when a class appears more than once. Pass one explicitly if the class
-   *   name is minified or you want a stable, meaningful logical id.
+   *   name is minified, you want a stable, meaningful logical id, or you want
+   *   `resources.get(id)` typed after {@link Composition.build}.
    */
-  and<T extends ConstructClass>(
+  and<T extends ConstructClass, Id extends string = never>(
     ctor: T,
     traits: ReadonlyArray<Trait<PropsOf<T>, InstanceType<T>>> = [],
-    id?: string,
-  ): Composition<[...Ts, InstanceType<T>]> {
-    return new Composition<[...Ts, InstanceType<T>]>([...this.#entries, toEntry(ctor, traits, id)]);
+    id?: Id,
+  ): Composition<[...Ts, InstanceType<T>], Ids & Bind<Id, InstanceType<T>>> {
+    return new Composition<[...Ts, InstanceType<T>], Ids & Bind<Id, InstanceType<T>>>([
+      ...this.#entries,
+      toEntry(ctor, traits, id),
+    ]);
   }
 
   /** Ids in declaration order, defaulting to class names with a suffix on repeats. */
@@ -344,7 +383,7 @@ export class Composition<Ts extends readonly Construct[] = readonly []> {
    *
    * @returns The scope, the constructs in declaration order, and a lookup.
    */
-  build(scope: Construct, id: string): BuildResult<Ts> {
+  build(scope: Construct, id: string): BuildResult<Ts, Ids> {
     const root = new Construct(scope, id);
     const resources = new ResourceRegistry();
     const pending: PendingDeferred[] = [];
@@ -388,7 +427,13 @@ export class Composition<Ts extends readonly Construct[] = readonly []> {
       }
     }
 
-    return { root, constructs: instances as unknown as Ts, resources };
+    return {
+      root,
+      constructs: instances as unknown as Ts,
+      // The registry answers `get` honestly at runtime; `Ids` records which of
+      // those answers the composition already proved present at build time.
+      resources: resources as unknown as Resources<Ids>,
+    };
   }
 }
 
@@ -413,10 +458,10 @@ export class Composition<Ts extends readonly Construct[] = readonly []> {
  * @param traits - Traits for this entry, checked against `ctor`.
  * @param id - CDK id for this entry. Defaults to the class name.
  */
-export function compose<T extends ConstructClass>(
+export function compose<T extends ConstructClass, Id extends string = never>(
   ctor: T,
   traits: ReadonlyArray<Trait<PropsOf<T>, InstanceType<T>>> = [],
-  id?: string,
-): Composition<[InstanceType<T>]> {
+  id?: Id,
+): Composition<[InstanceType<T>], Bind<Id, InstanceType<T>>> {
   return Composition.of(ctor, traits, id);
 }

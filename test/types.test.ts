@@ -31,6 +31,7 @@ type _P4 = Expect<Equals<PropsOf<typeof HttpApi>, HttpApiProps>>;
 
 // --- The native InstanceType works against the ConstructClass bound ---
 declare const scope: Construct;
+declare const runtimeId: string;
 
 type _I1 = Expect<Equals<InstanceType<typeof Queue>, Queue>>;
 type _I2 = Expect<Equals<InstanceType<typeof HttpStage>, HttpStage>>;
@@ -148,6 +149,36 @@ function _assertions() {
       run: (_q, r) => void r.get("Queue", Queue).queueArn,
     },
   ]);
+
+  // --- After build(), ids declared literally are typed and non-optional ---
+  const named = compose(Queue, [], "Inbox").and(Bucket, [], "Store").build(scope, "R");
+  // No `?` — the composition declared the id, so build() created it.
+  const inbox = named.resources.get("Inbox");
+  const store = named.resources.get("Store");
+  const _named: string[] = [inbox.queueArn, store.bucketArn];
+  type _G1 = Expect<Equals<typeof inbox, Queue>>;
+  type _G2 = Expect<Equals<typeof store, Bucket>>;
+  type _G3 = Expect<Equals<typeof unknownId, Construct | undefined>>;
+
+  // @ts-expect-error - "Inbox" is the Queue, not the Bucket
+  void named.resources.get("Inbox").bucketArn;
+
+  const unknownId = named.resources.get("Elsewhere");
+  // @ts-expect-error - an id the composition never declared stays Construct | undefined
+  void unknownId.node;
+
+  // A defaulted id is derived from the class name at runtime, so it stays untyped.
+  const defaulted = compose(Queue).build(scope, "R");
+  // @ts-expect-error - get("Queue") yields Construct | undefined
+  void defaulted.resources.get("Queue").queueArn;
+
+  // A non-literal id is unknowable, and must not widen every lookup to a Queue.
+  const dynamic = compose(Queue, [], runtimeId).build(scope, "R");
+  // @ts-expect-error - nothing was bound, so this is Construct | undefined
+  void dynamic.resources.get("anything").queueArn;
+
+  // The witness overload still wins on the two-argument call, id known or not.
+  void named.resources.get("Inbox", Bucket)?.bucketArn;
 
   // Action traits receive the concrete construct — no cast needed.
   compose(Queue, [
