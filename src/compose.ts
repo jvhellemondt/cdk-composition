@@ -1,4 +1,4 @@
-import { Construct } from "constructs";
+import { Construct } from 'constructs';
 
 /**
  * Structural upper bound for CDK construct classes.
@@ -49,7 +49,13 @@ type Bind<Id extends string, C extends Construct> = string extends Id
   : { [K in Id]: C };
 
 /**
- * Lookup for the constructs a composition has created so far.
+ * Lookup for the constructs of a composition.
+ *
+ * Every method resolves an entry on demand: during {@link Composition.build}'s
+ * first phase a lookup creates the construct it names if it does not exist yet,
+ * so a property trait can reach any sibling regardless of where either sits in
+ * the chain. Ordering is therefore discovered rather than declared — see
+ * {@link Composition.build}.
  *
  * `Ids` carries the ids declared literally in the composition, so `get` can
  * hand those back typed and non-optional. Trait callbacks receive the default —
@@ -65,8 +71,8 @@ export interface Resources<Ids extends IdMap = Record<never, Construct>> {
    * The construct created under `id`.
    *
    * An id the composition declared literally resolves to that entry's type and
-   * cannot be `undefined` — `build` created it, so it is there. Any other id
-   * stays `Construct | undefined`.
+   * cannot be `undefined` — the composition declares it, so it is there. Any
+   * other id stays `Construct | undefined`.
    */
   get<K extends string>(id: K): K extends keyof Ids ? Ids[K] : Construct | undefined;
   /**
@@ -75,9 +81,15 @@ export interface Resources<Ids extends IdMap = Record<never, Construct>> {
    * construct of a different class reads as `undefined`, same as a missing id.
    */
   get<T extends ConstructClass>(id: string, ctor: T): InstanceType<T> | undefined;
-  /** Whether a construct exists under `id`. */
+  /** Whether the composition declares an entry under `id`. */
   has(id: string): boolean;
-  /** Every construct created so far. */
+  /**
+   * Every construct in the composition, in declaration order.
+   *
+   * This asks for *all* of them, including the entry a property trait is being
+   * called for — so from a property trait it is always a cycle. Use it from a
+   * method or action trait.
+   */
   values(): Construct[];
 }
 
@@ -94,10 +106,14 @@ export interface Resources<Ids extends IdMap = Record<never, Construct>> {
  * per-stack state. Anything stateful — `Code.fromAsset`, a `Bucket` reference —
  * must use the function form, or the same instance is shared by every
  * `build()` and CDK rejects the second one.
+ *
+ * The function may resolve any sibling: the composition creates whatever it
+ * asks for on the spot. Two entries that resolve *each other* from property
+ * traits are the one unsatisfiable case, and `build` reports it as a cycle.
  */
 export interface PropertyTrait<P = object> {
   name: string;
-  type: "property";
+  type: 'property';
   value: Partial<P> | ((resources: Resources) => Partial<P>);
 }
 
@@ -111,7 +127,7 @@ export interface PropertyTrait<P = object> {
 export type MethodTrait<C extends Construct = Construct> = {
   [K in MethodKeys<C>]: {
     name: K;
-    type: "method";
+    type: 'method';
     args: (resources: Resources) => MethodArgs<C, K>;
   };
 }[MethodKeys<C>];
@@ -125,7 +141,7 @@ export type MethodTrait<C extends Construct = Construct> = {
  */
 export interface ActionTrait<C extends Construct = Construct> {
   name: string;
-  type: "action";
+  type: 'action';
   run: (construct: C, resources: Resources) => void;
 }
 
@@ -161,19 +177,19 @@ export type BuildResult<
 } & Ids;
 
 /** Members of {@link BuildResult} an entry id would shadow, so ids may not use them. */
-const RESERVED_IDS: ReadonlySet<string> = new Set(["root", "constructs", "resources"]);
+const RESERVED_IDS: ReadonlySet<string> = new Set(['root', 'constructs', 'resources']);
 
 /** Erased constructor used internally, once props are merged to a plain object. */
 type ErasedConstructClass = new (
   scope: Construct,
   id: string,
-  props: Record<string, unknown>,
+  props: Record<string, unknown>
 ) => Construct;
 
 /** Erased trait shapes for the heterogeneous entry list. */
 interface ErasedMethodTrait {
   name: string;
-  type: "method";
+  type: 'method';
   args: (resources: Resources) => readonly unknown[];
 }
 type ErasedTrait = PropertyTrait<object> | ErasedMethodTrait | ActionTrait<Construct>;
@@ -184,12 +200,10 @@ interface Entry {
   readonly id?: string;
 }
 
-interface PendingDeferred {
-  readonly construct: Construct;
-  readonly trait: ErasedMethodTrait | ActionTrait<Construct>;
-}
+/** Creates entry `index`'s construct, or returns the one already created. */
+type Instantiate = (index: number) => Construct;
 
-const JSII_RTTI = Symbol.for("jsii.rtti");
+const JSII_RTTI = Symbol.for('jsii.rtti');
 
 /**
  * The name a construct class was declared with.
@@ -212,14 +226,14 @@ function declaredName(ctor: { readonly name: string }): string {
       | undefined;
     if (!meta?.fqn) continue;
     if ((cur as { name?: string }).name !== ctor.name) break;
-    return meta.fqn.slice(meta.fqn.lastIndexOf(".") + 1);
+    return meta.fqn.slice(meta.fqn.lastIndexOf('.') + 1);
   }
   return ctor.name;
 }
 
 /** True for `{}` literals only — not arrays, not class instances. */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const proto = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
 }
@@ -232,7 +246,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  */
 function mergeProps(
   base: Record<string, unknown>,
-  next: Record<string, unknown>,
+  next: Record<string, unknown>
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { ...base };
   for (const [key, value] of Object.entries(next)) {
@@ -243,66 +257,77 @@ function mergeProps(
   return out;
 }
 
+/**
+ * {@link Resources} over the entries of one `build`, resolving each through
+ * `instantiate` on first request.
+ *
+ * Lookups answer from the *declared* entries rather than from what exists, so
+ * a class is matched statically — an entry need not be built to be found, and
+ * `of` sees the same candidates whenever it is called. Only the construct it
+ * settles on gets created.
+ */
 class ResourceRegistry implements Resources {
-  readonly #byId = new Map<string, Construct>();
-  /** Phase 1 only sees later-declared entries, so misses get a different hint. */
-  #instantiating = true;
+  readonly #entries: ReadonlyArray<Entry>;
+  readonly #ids: ReadonlyArray<string>;
+  readonly #instantiate: Instantiate;
 
-  add(id: string, construct: Construct): void {
-    this.#byId.set(id, construct);
+  constructor(entries: ReadonlyArray<Entry>, ids: ReadonlyArray<string>, instantiate: Instantiate) {
+    this.#entries = entries;
+    this.#ids = ids;
+    this.#instantiate = instantiate;
   }
 
-  sealInstantiation(): void {
-    this.#instantiating = false;
+  /** Indexes of the entries whose class is `ctor` or extends it. */
+  #matching(ctor: ConstructClass): number[] {
+    const target = ctor as unknown as ErasedConstructClass;
+    return this.#entries.flatMap((entry, index) =>
+      entry.ctor === target || entry.ctor.prototype instanceof ctor ? [index] : []
+    );
   }
 
   get(id: string): Construct | undefined;
   get<T extends ConstructClass>(id: string, ctor: T): InstanceType<T> | undefined;
   get(id: string, ctor?: ConstructClass): Construct | undefined {
-    const construct = this.#byId.get(id);
-    if (construct === undefined || ctor === undefined) return construct;
+    const index = this.#ids.indexOf(id);
+    if (index === -1) return undefined;
+    const construct = this.#instantiate(index);
+    if (ctor === undefined) return construct;
     return construct instanceof ctor ? construct : undefined;
   }
 
   has(id: string): boolean {
-    return this.#byId.has(id);
+    return this.#ids.includes(id);
   }
 
   values(): Construct[] {
-    return [...this.#byId.values()];
+    return this.#entries.map((_, index) => this.#instantiate(index));
   }
 
   all<T extends ConstructClass>(ctor: T): InstanceType<T>[] {
-    return this.values().filter((c): c is InstanceType<T> => c instanceof ctor);
+    return this.#matching(ctor).map((index) => this.#instantiate(index) as InstanceType<T>);
   }
 
   of<T extends ConstructClass>(ctor: T): InstanceType<T> {
     const name = declaredName(ctor);
-    const found = this.all(ctor);
+    const found = this.#matching(ctor);
     if (found.length > 1) {
       throw new Error(
         `Ambiguous resources.of(${name}): the composition has ${found.length} of them. ` +
-          `Use resources.all(${name}) or look one up by id with resources.get(id).`,
+          `Use resources.all(${name}) or look one up by id with resources.get(id).`
       );
     }
     const [only] = found;
-    if (!only) {
-      throw new Error(
-        this.#instantiating
-          ? `No ${name} available yet. Entries are instantiated in reverse declaration ` +
-              `order, so a property trait only sees siblings declared after it — move ${name} ` +
-              `later in the chain, or resolve it from a method or action trait instead.`
-          : `No ${name} in this composition.`,
-      );
+    if (only === undefined) {
+      throw new Error(`No ${name} in this composition.`);
     }
-    return only;
+    return this.#instantiate(only) as InstanceType<T>;
   }
 }
 
 function toEntry<T extends ConstructClass>(
   ctor: T,
   traits: ReadonlyArray<Trait<PropsOf<T>, InstanceType<T>>>,
-  id?: string,
+  id?: string
 ): Entry {
   return {
     ctor: ctor as unknown as ErasedConstructClass,
@@ -336,8 +361,8 @@ export class Composition<
   /** @internal */
   static of<T extends ConstructClass, Id extends string = never>(
     ctor: T,
-    traits: ReadonlyArray<Trait<PropsOf<T>, InstanceType<T>>> = [],
-    id?: Id,
+    traits: ReadonlyArray<Trait<PropsOf<T>, InstanceType<T>>>,
+    id?: Id
   ): Composition<[InstanceType<T>], Bind<Id, InstanceType<T>>> {
     return new Composition<[InstanceType<T>], Bind<Id, InstanceType<T>>>([
       toEntry(ctor, traits, id),
@@ -358,7 +383,7 @@ export class Composition<
   and<T extends ConstructClass, Id extends string = never>(
     ctor: T,
     traits: ReadonlyArray<Trait<PropsOf<T>, InstanceType<T>>> = [],
-    id?: Id,
+    id?: Id
   ): Composition<[...Ts, InstanceType<T>], Ids & Bind<Id, InstanceType<T>>> {
     return new Composition<[...Ts, InstanceType<T>], Ids & Bind<Id, InstanceType<T>>>([
       ...this.#entries,
@@ -380,17 +405,17 @@ export class Composition<
     const duplicates = ids.filter((id, i) => ids.indexOf(id) !== i);
     if (duplicates.length > 0) {
       throw new Error(
-        `Duplicate ids in composition: ${[...new Set(duplicates)].join(", ")}. ` +
-          `Pass an explicit id to distinguish the entries.`,
+        `Duplicate ids in composition: ${[...new Set(duplicates)].join(', ')}. ` +
+          `Pass an explicit id to distinguish the entries.`
       );
     }
 
     const reserved = ids.filter((id) => RESERVED_IDS.has(id));
     if (reserved.length > 0) {
       throw new Error(
-        `Reserved ids in composition: ${[...new Set(reserved)].join(", ")}. ` +
+        `Reserved ids in composition: ${[...new Set(reserved)].join(', ')}. ` +
           `build() returns each resource under its own id alongside ` +
-          `${[...RESERVED_IDS].join(", ")}, so those names cannot be used as ids.`,
+          `${[...RESERVED_IDS].join(', ')}, so those names cannot be used as ids.`
       );
     }
     return ids;
@@ -399,66 +424,94 @@ export class Composition<
   /**
    * Materialises the composition in two phases.
    *
-   * **Phase 1 — instantiation, reverse declaration order.** Later-declared
-   * siblings exist first, so earlier entries' property functions can resolve
-   * them. Property traits are merged (last wins, plain objects deep) into props.
+   * **Phase 1 — instantiation, on demand.** Each entry is created the first
+   * time something asks for it, and a property trait asks by resolving a
+   * sibling from its {@link Resources}. Creation order is therefore whatever
+   * the traits imply — a topological sort discovered by following the
+   * references, so declaration order carries no meaning. Entries nobody
+   * resolves are created by a final sweep in declaration order. Property
+   * traits are merged (last wins, plain objects deep) into props.
    *
-   * **Phase 2 — deferred traits, same reverse order.** Method and action traits
-   * run once every construct exists.
+   * A property trait that resolves a sibling whose own property traits resolve
+   * it back has asked for something that cannot exist; that is reported as a
+   * cycle naming the entries involved.
+   *
+   * **Phase 2 — deferred traits, declaration order.** Method and action traits
+   * run once every construct exists, so they may resolve any sibling freely.
    *
    * @returns The scope, the constructs in declaration order, a lookup, and each
    *   construct under its own id.
    */
   build(scope: Construct, id: string): BuildResult<Ts, Ids> {
     const root = new Construct(scope, id);
-    const resources = new ResourceRegistry();
-    const pending: PendingDeferred[] = [];
+    const entries = this.#entries;
     const ids = this.#assignIds();
-    const instances: Construct[] = new Array(this.#entries.length);
+    const instances: (Construct | undefined)[] = new Array(entries.length);
+    /** Entries whose props are being assembled, innermost last — the cycle path. */
+    const resolving: number[] = [];
 
-    const indexed = this.#entries.map((entry, index) => ({ entry, index }));
-    for (const { entry, index } of indexed.toReversed()) {
-      const config = entry.traits
-        .filter((t): t is PropertyTrait<object> => t.type === "property")
-        .reduce<Record<string, unknown>>((acc, trait) => {
-          const value = typeof trait.value === "function" ? trait.value(resources) : trait.value;
-          return mergeProps(acc, value as Record<string, unknown>);
-        }, {});
+    const instantiate: Instantiate = (index) => {
+      const existing = instances[index];
+      if (existing !== undefined) return existing;
 
-      const construct = new entry.ctor(root, ids[index], config);
-      instances[index] = construct;
-      resources.add(ids[index], construct);
-
-      for (const trait of entry.traits) {
-        if (trait.type === "method" || trait.type === "action") {
-          pending.push({ construct, trait });
-        }
+      const cycleStart = resolving.indexOf(index);
+      if (cycleStart !== -1) {
+        const path = [...resolving.slice(cycleStart), index].map((i) => ids[i]).join(' → ');
+        throw new Error(
+          `Cyclic property dependency: ${path}. Each of these entries needs the next one to ` +
+            `exist before its own props are complete, so none of them can be created first. ` +
+            `Move one side to a method or action trait — those run once every construct exists.`
+        );
       }
-    }
 
-    resources.sealInstantiation();
+      resolving.push(index);
+      try {
+        const entry = entries[index];
+        const config = entry.traits
+          .filter((t): t is PropertyTrait<object> => t.type === 'property')
+          .reduce<Record<string, unknown>>((acc, trait) => {
+            const value = typeof trait.value === 'function' ? trait.value(resources) : trait.value;
+            return mergeProps(acc, value as Record<string, unknown>);
+          }, {});
 
-    for (const { construct, trait } of pending) {
-      if (trait.type === "method") {
-        const target = construct as unknown as Record<string, unknown>;
-        const method = target[trait.name];
-        if (typeof method !== "function") {
-          throw new Error(
-            `Method trait "${trait.name}" is not a function on ${construct.constructor.name}.`,
-          );
+        const construct = new entry.ctor(root, ids[index], config);
+        instances[index] = construct;
+        return construct;
+      } finally {
+        resolving.pop();
+      }
+    };
+
+    const resources = new ResourceRegistry(entries, ids, instantiate);
+
+    // Memoised, so this both creates whatever no trait reached and collects the
+    // results in declaration order.
+    const built = entries.map((_, index) => instantiate(index));
+
+    for (const [index, entry] of entries.entries()) {
+      const construct = built[index];
+      for (const trait of entry.traits) {
+        if (trait.type === 'method') {
+          const target = construct as unknown as Record<string, unknown>;
+          const method = target[trait.name];
+          if (typeof method !== 'function') {
+            throw new Error(
+              `Method trait "${trait.name}" is not a function on ${construct.constructor.name}.`
+            );
+          }
+          (method as (...args: unknown[]) => unknown).apply(construct, [...trait.args(resources)]);
+        } else if (trait.type === 'action') {
+          trait.run(construct, resources);
         }
-        (method as (...args: unknown[]) => unknown).apply(construct, [...trait.args(resources)]);
-      } else {
-        trait.run(construct, resources);
       }
     }
 
     // Named entries come first, so the fixed members always win a collision —
     // `#assignIds` already rejects the ids that could cause one.
     return {
-      ...Object.fromEntries(ids.map((entryId, index) => [entryId, instances[index]])),
+      ...Object.fromEntries(ids.map((entryId, index) => [entryId, built[index]])),
       root,
-      constructs: instances as unknown as Ts,
+      constructs: built as unknown as Ts,
       // The registry answers `get` honestly at runtime; `Ids` records which of
       // those answers the composition already proved present at build time.
       resources: resources as unknown as Resources<Ids>,
@@ -490,7 +543,7 @@ export class Composition<
 export function compose<T extends ConstructClass, Id extends string = never>(
   ctor: T,
   traits: ReadonlyArray<Trait<PropsOf<T>, InstanceType<T>>> = [],
-  id?: Id,
+  id?: Id
 ): Composition<[InstanceType<T>], Bind<Id, InstanceType<T>>> {
   return Composition.of(ctor, traits, id);
 }

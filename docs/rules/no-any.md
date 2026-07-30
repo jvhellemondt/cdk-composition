@@ -22,8 +22,8 @@ type ConstructClass = new (...args: never[]) => Construct;
 Recover the concrete types per call site with the built-ins:
 
 ```ts
-InstanceType<T>                          // the construct instance
-NonNullable<ConstructorParameters<T>[2]> // its props
+InstanceType<T>; // the construct instance
+NonNullable<ConstructorParameters<T>[2]>; // its props
 ```
 
 ## Gotcha

@@ -75,7 +75,7 @@ Resources are declared as a `Composition` — a flat list of construct classes p
 - Good, because a composition reads like a manifest: which constructs, and what named capabilities each carries
 - Good, because traits are open for extension and closed for modification — a changed requirement yields a new trait, leaving existing consumers untouched
 - Good, because traits are distributable; a shared library of named traits is more granular than a shared library of L3 constructs
-- Good, because the two-phase build (instantiate reversed, then apply deferred traits) means cross-sibling references are expressed as data rather than imperative wiring code
+- Good, because the two-phase build (instantiate, then apply deferred traits) means cross-sibling references are expressed as data rather than imperative wiring code — instantiation order within phase 1 is revisited in [ADR-0002](0002-demand-driven-instantiation.md)
 - Neutral, because traits that call arbitrary methods (`MethodTrait`) or run arbitrary logic (`ActionTrait`) can still accumulate complexity — discipline in naming and scope is still required
 - Bad, because the pattern is not part of the CDK standard library; teams adopting it must learn the trait model before they can contribute
 
