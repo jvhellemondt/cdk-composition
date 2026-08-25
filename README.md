@@ -79,7 +79,7 @@ export const thirtySecondVisibility: PropertyTrait = {
   value: { visibilityTimeout: Duration.seconds(30) },
 };
 
-// Function form — references a sibling that will be declared later in the composition
+// Function form — resolving the sibling is what creates it, wherever it sits in the chain
 export const withDeadLetterQueue: PropertyTrait = {
   name: "dead-letter-queue",
   type: "property",
@@ -336,10 +336,12 @@ Declarations are bundled rather than emitted file-by-file, so the shipped `.d.ts
 
 To cut a release:
 
-1. Bump `version` in `package.json` and commit it.
-2. Tag and publish a GitHub release named `vX.Y.Z`. The workflow checks the tag matches `package.json`, runs lint, the tests and the build, then publishes.
+1. Bump `version` in `package.json` and merge it to `main`.
+2. Run the **Publish** workflow from the Actions tab.
 
-`workflow_dispatch` runs the same pipeline with `npm publish --dry-run`, which is the way to validate packaging without releasing.
+`package.json` is the single source of truth for the version. The workflow reads it, refuses to run if the tag already exists or the version is already on npm, runs lint, the tests and the build, publishes, and only then creates the `vX.Y.Z` tag and the GitHub release with generated notes. Nothing is tagged by hand, and a failed publish never leaves a release pointing at a version npm does not have.
+
+Tick **dry run** to take the same pipeline as far as `npm publish --dry-run` and stop before publishing or tagging.
 
 ### Trusted publishing
 
