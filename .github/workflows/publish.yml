@@ -24,13 +24,11 @@ jobs:
         with:
           bun-version: 1.3.14
 
-      # Trusted publishing needs Node >= 22.14.0 and npm >= 11.5.1. Node 22.x
-      # satisfies the former; the npm it bundles does not satisfy the latter.
+      # Trusted publishing needs Node >= 22.14.0 and npm >= 11.5.1. Node 24.x
+      # covers both — it bundles npm 11.17 — so npm needs no separate upgrade.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-
-      - run: npm install -g npm@latest
+          node-version: 24
 
       - run: bun install --frozen-lockfile
 

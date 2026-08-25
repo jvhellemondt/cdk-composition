@@ -339,7 +339,7 @@ To cut a release:
 
 ### Trusted publishing
 
-The workflow authenticates to npm with [trusted publishing](https://docs.npmjs.com/trusted-publishers) — GitHub's OIDC token is exchanged for short-lived credentials, so there is no `NPM_TOKEN` secret to store or rotate. That is why the job requests `id-token: write`, runs on a GitHub-hosted runner, and upgrades npm before publishing (trusted publishing needs npm >= 11.5.1 and Node >= 22.14.0).
+The workflow authenticates to npm with [trusted publishing](https://docs.npmjs.com/trusted-publishers) — GitHub's OIDC token is exchanged for short-lived credentials, so there is no `NPM_TOKEN` secret to store or rotate. That is why the job requests `id-token: write`, runs on a GitHub-hosted runner, and runs on Node 24 (trusted publishing needs Node >= 22.14.0 and npm >= 11.5.1, and Node 24 bundles npm 11.17).
 
 npm can only attach a trusted publisher to a package that already exists — there is no way to reserve or create an empty package on the registry. The first version therefore has to be published the old way, once:
 
