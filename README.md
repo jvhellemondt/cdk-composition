@@ -28,8 +28,10 @@ Traits are **named, typed values defined outside the composition**. They live in
 
 `build()` materialises the composition in two phases:
 
-1. **Instantiation** — constructs are created in *reverse* declaration order so that later-declared siblings are already available when earlier entries' property functions run.
-2. **Deferred traits** — method and action traits are applied in the order collected during phase 1 (latest-declared first).
+1. **Instantiation** — an entry is created the first time something asks for it. A property function resolving a sibling is what causes that sibling to be created, so the order emerges from the references traits actually make; entries nothing resolved are created by a final sweep in declaration order.
+2. **Deferred traits** — method and action traits run once every construct exists, in declaration order.
+
+Declaration order is therefore presentation, not build order: order the `.and()` chain for reading. A property trait may resolve any sibling, whether it is declared before or after. The one unsatisfiable case is two entries whose property traits resolve *each other*, which `build()` reports as a cycle naming the path — see [ADR-0002](docs/0002-demand-driven-instantiation.md).
 
 `build()` returns each construct under its own id, plus the same constructs typed and in declaration order, so nothing needs to be looked up afterwards:
 
@@ -60,7 +62,7 @@ A defaulted id keys the entry at runtime too, but only ids written as literals a
 
 Merges configuration into a construct's props before it is instantiated.
 
-`value` is a plain object for static configuration, or a function when a prop needs to reference a sibling construct. Because phase 1 runs in reverse declaration order, any sibling declared *after* the current entry is already built when the function runs — `resources.of()` throws with that hint if it is not.
+`value` is a plain object for static configuration, or a function when a prop needs to reference a sibling construct. The function may resolve any sibling regardless of where it sits in the chain: the composition creates whatever the trait asks for on the spot. A trait's requirement is therefore "the composition holds a `Queue`", never "a `Queue` is declared after me" — so traits stay portable between compositions.
 
 Use the function form for anything stateful (`Code.fromAsset`, for instance). The object form is shared across every `build()`, and CDK rejects a second binding.
 
@@ -136,7 +138,7 @@ compose(Function, [withSqsEventSource(5)])
   .build(this, "Worker");
 ```
 
-Method traits are applied latest-declared-first, matching the reverse-instantiation order of phase 1.
+Method traits are applied in declaration order, after every construct in the composition exists.
 
 ---
 
@@ -201,8 +203,8 @@ export const nodeRuntime: PropertyTrait = {
   value: { runtime: Runtime.NODEJS_24_X, memorySize: 512, timeout: Duration.seconds(30) },
 };
 
-// Function form — Queue is declared after Function in the composition,
-// but already instantiated by the time this runs (reverse-order phase 1).
+// Function form — resolving the Queue is what creates it, so this works
+// wherever the Queue sits in the chain.
 export const withDeadLetterQueue: PropertyTrait = {
   name: "dead-letter-queue",
   type: "property",
@@ -310,15 +312,15 @@ Two cases stay untyped — and, for the same reason, absent from the build resul
 - **A defaulted id.** It is derived from the class name at runtime; `ctor.name` is `string` for every class, so the type system cannot read `"Queue"` out of `typeof Queue`.
 - **A `string` variable as the id.** Nothing to bind.
 
-Trait callbacks also receive the untyped lookup. A trait is written alongside its own entry, before the rest of the chain exists to be inferred from — and the ids that *are* known by then are precisely the earlier-declared ones, which a property trait cannot reach anyway, since entries are instantiated in reverse. Inside a trait, reach for `of(Class)`: it is typed, and it throws with an explanatory message rather than yielding `undefined`.
+Trait callbacks also receive the untyped lookup. A trait is written alongside its own entry, before the rest of the chain exists to be inferred from, so there are no ids to bind against. Inside a trait, reach for `of(Class)`: it is typed, and it throws with an explanatory message — `No Bucket in this composition.` — rather than yielding `undefined`.
 
 ### Trait types
 
 | Type | Purpose | Runs |
 |------|---------|------|
-| `PropertyTrait<Props>` | Merges props before instantiation. `value` is a plain object or `(resources) => object`. | Phase 1, during instantiation |
-| `MethodTrait<Construct>` | Calls a method. Name and arguments are both checked. | Phase 2, latest-declared first |
-| `ActionTrait<Construct>` | Runs arbitrary logic. `run` receives the concrete construct and the lookup. | Phase 2, latest-declared first |
+| `PropertyTrait<Props>` | Merges props before instantiation. `value` is a plain object or `(resources) => object`. | Phase 1, when the entry is first resolved |
+| `MethodTrait<Construct>` | Calls a method. Name and arguments are both checked. | Phase 2, declaration order |
+| `ActionTrait<Construct>` | Runs arbitrary logic. `run` receives the concrete construct and the lookup. | Phase 2, declaration order |
 
 All traits carry a `name` field. It has no functional effect — it documents intent and is the unit of granularity at code review.
 
