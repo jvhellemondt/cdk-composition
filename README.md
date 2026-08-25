@@ -328,7 +328,9 @@ All traits carry a `name` field. It has no functional effect — it documents in
 
 The package is published to npm as [`@arts-n-crafts/cdk-composition`](https://www.npmjs.com/package/@arts-n-crafts/cdk-composition) by `.github/workflows/publish.yml`.
 
-`bun run build` produces `dist/`: an ESM bundle (`index.mjs`), a CommonJS bundle (`index.cjs`) and declarations (`index.d.ts`). `aws-cdk-lib` and `constructs` stay external. Only `dist/` is published — `src/` and the tests are not.
+`bun run build` runs [tsup](https://tsup.egoist.dev), which produces `dist/`: a CommonJS bundle (`index.js`), an ESM bundle (`index.mjs`) and a single bundled declaration file per format. `aws-cdk-lib` and `constructs` stay external. Only `dist/` is published — `src/` and the tests are not.
+
+Declarations are bundled rather than emitted file-by-file, so the shipped `.d.ts` has no relative imports and resolves under every `moduleResolution` setting. `src/` therefore keeps plain extensionless specifiers, with no build concern leaking into it.
 
 To cut a release:
 

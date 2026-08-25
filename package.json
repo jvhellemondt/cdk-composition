@@ -13,14 +13,19 @@
     "url": "https://github.com/jvhellemondt/cdk-composition/issues"
   },
   "type": "commonjs",
-  "main": "./dist/index.cjs",
+  "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.cjs"
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
     },
     "./package.json": "./package.json"
   },
@@ -33,10 +38,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "bun run build:clean && bun run build:js && bun run build:types",
-    "build:clean": "rm -rf dist",
-    "build:js": "bun build src/index.ts --outfile dist/index.mjs --target node --format esm --external aws-cdk-lib --external constructs && bun build src/index.ts --outfile dist/index.cjs --target node --format cjs --external aws-cdk-lib --external constructs",
-    "build:types": "tsc -p tsconfig.build.json",
+    "build": "tsup",
     "test": "bun test --timeout 30000",
     "test:watch": "bun test --watch --timeout 30000",
     "lint": "oxlint src test",
@@ -61,6 +63,7 @@
     "constructs": "^10.3.0",
     "oxfmt": "^0.60.0",
     "oxlint": "^1.75.0",
+    "tsup": "^8.5.1",
     "typescript": "^5.9.2"
   }
 }
