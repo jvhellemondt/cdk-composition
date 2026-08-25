@@ -333,8 +333,29 @@ The package is published to npm as [`@arts-n-crafts/cdk-composition`](https://ww
 To cut a release:
 
 1. Bump `version` in `package.json` and commit it.
-2. Tag and publish a GitHub release named `vX.Y.Z`. The workflow checks the tag matches `package.json`, runs lint, the tests and the build, then publishes with provenance.
+2. Tag and publish a GitHub release named `vX.Y.Z`. The workflow checks the tag matches `package.json`, runs lint, the tests and the build, then publishes.
 
 `workflow_dispatch` runs the same pipeline with `npm publish --dry-run`, which is the way to validate packaging without releasing.
 
-The workflow needs an npm automation token in the repository secret `NPM_TOKEN`, with publish rights on the `@arts-n-crafts` scope.
+### Trusted publishing
+
+The workflow authenticates to npm with [trusted publishing](https://docs.npmjs.com/trusted-publishers) — GitHub's OIDC token is exchanged for short-lived credentials, so there is no `NPM_TOKEN` secret to store or rotate. That is why the job requests `id-token: write`, runs on a GitHub-hosted runner, and upgrades npm before publishing (trusted publishing needs npm >= 11.5.1 and Node >= 22.14.0).
+
+npm can only attach a trusted publisher to a package that already exists — there is no way to reserve or create an empty package on the registry. The first version therefore has to be published the old way, once:
+
+```sh
+npm login              # a member of the @arts-n-crafts org, with publish rights
+bun run build
+npm publish            # publishConfig already sets access: public
+```
+
+Then, on npmjs.com, open the package's **Settings -> Trusted Publisher**, choose GitHub Actions, and enter:
+
+| Field | Value |
+|-------|-------|
+| Organization or user | `jvhellemondt` |
+| Repository | `cdk-composition` |
+| Workflow filename | `publish.yml` |
+| Environment | *(leave empty)* |
+
+Every release after that goes through the workflow with no credentials in the repository. npm attaches a provenance attestation automatically on a trusted publish, which is why `publishConfig` does not set `provenance` — that flag would break the manual bootstrap publish above, since provenance cannot be generated outside CI.

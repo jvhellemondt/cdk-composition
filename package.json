@@ -30,8 +30,7 @@
     "LICENSE"
   ],
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "scripts": {
     "build": "bun run build:clean && bun run build:js && bun run build:types",

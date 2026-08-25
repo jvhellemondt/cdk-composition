@@ -12,11 +12,11 @@ on:
 
 permissions:
   contents: read
-  id-token: write # npm provenance
+  id-token: write # required for npm trusted publishing (OIDC)
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest # trusted publishing requires a cloud-hosted runner
     steps:
       - uses: actions/checkout@v4
 
@@ -24,10 +24,13 @@ jobs:
         with:
           bun-version: 1.3.14
 
+      # Trusted publishing needs Node >= 22.14.0 and npm >= 11.5.1. Node 22.x
+      # satisfies the former; the npm it bundles does not satisfy the latter.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
+
+      - run: npm install -g npm@latest
 
       - run: bun install --frozen-lockfile
 
@@ -51,8 +54,9 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: npm publish --dry-run
 
+      # No NODE_AUTH_TOKEN: npm exchanges the workflow's OIDC token for
+      # short-lived credentials, against the trusted publisher configured on
+      # npmjs.com for this repository and this workflow filename.
       - name: Publish
         if: github.event_name == 'release'
         run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
