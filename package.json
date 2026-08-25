@@ -1,8 +1,15 @@
 {
   "name": "@arts-n-crafts/cdk-composition",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Higher-level composition patterns for AWS CDK TypeScript",
-  "keywords": ["aws-cdk", "cdk", "typescript", "composition", "constructs", "patterns"],
+  "keywords": [
+    "aws-cdk",
+    "cdk",
+    "typescript",
+    "composition",
+    "constructs",
+    "patterns"
+  ],
   "license": "MIT",
   "homepage": "https://github.com/jvhellemondt/cdk-composition#readme",
   "repository": {
