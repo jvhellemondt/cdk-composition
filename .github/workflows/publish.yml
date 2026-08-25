@@ -1,0 +1,60 @@
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Pack and validate without publishing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write # required for npm trusted publishing (OIDC)
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest # trusted publishing requires a cloud-hosted runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      # Trusted publishing needs Node >= 22.14.0 and npm >= 11.5.1. Node 24.x
+      # covers both — it bundles npm 11.17 — so npm needs no separate upgrade.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run lint
+
+      - run: bun test
+
+      - run: bun run build
+
+      - name: Check the release tag matches package.json
+        if: github.event_name == 'release'
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $version" >&2
+            exit 1
+          fi
+
+      - name: Publish (dry run)
+        if: github.event_name == 'workflow_dispatch'
+        run: npm publish --dry-run
+
+      # No NODE_AUTH_TOKEN: npm exchanges the workflow's OIDC token for
+      # short-lived credentials, against the trusted publisher configured on
+      # npmjs.com for this repository and this workflow filename.
+      - name: Publish
+        if: github.event_name == 'release'
+        run: npm publish

@@ -15,9 +15,9 @@ Higher-level composition patterns for AWS CDK TypeScript.
 ## Installation
 
 ```sh
-npm install cdk-composition
+npm install @arts-n-crafts/cdk-composition
 # or
-bun add cdk-composition
+bun add @arts-n-crafts/cdk-composition
 ```
 
 `aws-cdk-lib` and `constructs` are peer dependencies — they are not bundled.
@@ -69,7 +69,7 @@ Property traits merge left-to-right, later traits winning. Plain objects merge d
 ```ts
 // traits/queue.ts
 import { Duration } from "aws-cdk-lib";
-import { type PropertyTrait } from "cdk-composition";
+import { type PropertyTrait } from "@arts-n-crafts/cdk-composition";
 
 export const thirtySecondVisibility: PropertyTrait = {
   name: "visibility-30s",
@@ -109,7 +109,7 @@ Overloaded methods resolve to their last overload; TypeScript exposes only that 
 ```ts
 // traits/bucket.ts
 import { Duration } from "aws-cdk-lib";
-import { type MethodTrait } from "cdk-composition";
+import { type MethodTrait } from "@arts-n-crafts/cdk-composition";
 import { Queue } from "aws-cdk-lib/aws-sqs";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 
@@ -152,7 +152,7 @@ import { Stack } from "aws-cdk-lib";
 import { Function } from "aws-cdk-lib/aws-lambda";
 import { HttpApi, HttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
-import { type ActionTrait } from "cdk-composition";
+import { type ActionTrait } from "@arts-n-crafts/cdk-composition";
 
 export const httpRoute = (path: string, method: HttpMethod): ActionTrait<Function> => ({
   name: `http-route-${method.toLowerCase()}-${path}`,
@@ -193,7 +193,7 @@ import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { Queue } from "aws-cdk-lib/aws-sqs";
 import { HttpApi, HttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
-import { type PropertyTrait, type MethodTrait, type ActionTrait } from "cdk-composition";
+import { type PropertyTrait, type MethodTrait, type ActionTrait } from "@arts-n-crafts/cdk-composition";
 
 export const nodeRuntime: PropertyTrait = {
   name: "runtime",
@@ -239,7 +239,7 @@ export const workerVisibility: PropertyTrait = {
 
 ```ts
 // stack.ts
-import { compose } from "cdk-composition";
+import { compose } from "@arts-n-crafts/cdk-composition";
 import {
   nodeRuntime,
   withDeadLetterQueue,
@@ -321,3 +321,43 @@ Trait callbacks also receive the untyped lookup. A trait is written alongside it
 | `ActionTrait<Construct>` | Runs arbitrary logic. `run` receives the concrete construct and the lookup. | Phase 2, latest-declared first |
 
 All traits carry a `name` field. It has no functional effect — it documents intent and is the unit of granularity at code review.
+
+---
+
+## Releasing
+
+The package is published to npm as [`@arts-n-crafts/cdk-composition`](https://www.npmjs.com/package/@arts-n-crafts/cdk-composition) by `.github/workflows/publish.yml`.
+
+`bun run build` runs [tsup](https://tsup.egoist.dev), which produces `dist/`: a CommonJS bundle (`index.js`), an ESM bundle (`index.mjs`) and a single bundled declaration file per format. `aws-cdk-lib` and `constructs` stay external. Only `dist/` is published — `src/` and the tests are not.
+
+Declarations are bundled rather than emitted file-by-file, so the shipped `.d.ts` has no relative imports and resolves under every `moduleResolution` setting. `src/` therefore keeps plain extensionless specifiers, with no build concern leaking into it.
+
+To cut a release:
+
+1. Bump `version` in `package.json` and commit it.
+2. Tag and publish a GitHub release named `vX.Y.Z`. The workflow checks the tag matches `package.json`, runs lint, the tests and the build, then publishes.
+
+`workflow_dispatch` runs the same pipeline with `npm publish --dry-run`, which is the way to validate packaging without releasing.
+
+### Trusted publishing
+
+The workflow authenticates to npm with [trusted publishing](https://docs.npmjs.com/trusted-publishers) — GitHub's OIDC token is exchanged for short-lived credentials, so there is no `NPM_TOKEN` secret to store or rotate. That is why the job requests `id-token: write`, runs on a GitHub-hosted runner, and runs on Node 24 (trusted publishing needs Node >= 22.14.0 and npm >= 11.5.1, and Node 24 bundles npm 11.17).
+
+npm can only attach a trusted publisher to a package that already exists — there is no way to reserve or create an empty package on the registry. The first version therefore has to be published the old way, once:
+
+```sh
+npm login              # a member of the @arts-n-crafts org, with publish rights
+bun run build
+npm publish            # publishConfig already sets access: public
+```
+
+Then, on npmjs.com, open the package's **Settings -> Trusted Publisher**, choose GitHub Actions, and enter:
+
+| Field | Value |
+|-------|-------|
+| Organization or user | `jvhellemondt` |
+| Repository | `cdk-composition` |
+| Workflow filename | `publish.yml` |
+| Environment | *(leave empty)* |
+
+Every release after that goes through the workflow with no credentials in the repository. npm attaches a provenance attestation automatically on a trusted publish, which is why `publishConfig` does not set `provenance` — that flag would break the manual bootstrap publish above, since provenance cannot be generated outside CI.
