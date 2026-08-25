@@ -15,9 +15,9 @@ Higher-level composition patterns for AWS CDK TypeScript.
 ## Installation
 
 ```sh
-npm install cdk-composition
+npm install @arts-n-crafts/cdk-composition
 # or
-bun add cdk-composition
+bun add @arts-n-crafts/cdk-composition
 ```
 
 `aws-cdk-lib` and `constructs` are peer dependencies — they are not bundled.
@@ -69,7 +69,7 @@ Property traits merge left-to-right, later traits winning. Plain objects merge d
 ```ts
 // traits/queue.ts
 import { Duration } from "aws-cdk-lib";
-import { type PropertyTrait } from "cdk-composition";
+import { type PropertyTrait } from "@arts-n-crafts/cdk-composition";
 
 export const thirtySecondVisibility: PropertyTrait = {
   name: "visibility-30s",
@@ -109,7 +109,7 @@ Overloaded methods resolve to their last overload; TypeScript exposes only that 
 ```ts
 // traits/bucket.ts
 import { Duration } from "aws-cdk-lib";
-import { type MethodTrait } from "cdk-composition";
+import { type MethodTrait } from "@arts-n-crafts/cdk-composition";
 import { Queue } from "aws-cdk-lib/aws-sqs";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 
@@ -152,7 +152,7 @@ import { Stack } from "aws-cdk-lib";
 import { Function } from "aws-cdk-lib/aws-lambda";
 import { HttpApi, HttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
-import { type ActionTrait } from "cdk-composition";
+import { type ActionTrait } from "@arts-n-crafts/cdk-composition";
 
 export const httpRoute = (path: string, method: HttpMethod): ActionTrait<Function> => ({
   name: `http-route-${method.toLowerCase()}-${path}`,
@@ -193,7 +193,7 @@ import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { Queue } from "aws-cdk-lib/aws-sqs";
 import { HttpApi, HttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
-import { type PropertyTrait, type MethodTrait, type ActionTrait } from "cdk-composition";
+import { type PropertyTrait, type MethodTrait, type ActionTrait } from "@arts-n-crafts/cdk-composition";
 
 export const nodeRuntime: PropertyTrait = {
   name: "runtime",
@@ -239,7 +239,7 @@ export const workerVisibility: PropertyTrait = {
 
 ```ts
 // stack.ts
-import { compose } from "cdk-composition";
+import { compose } from "@arts-n-crafts/cdk-composition";
 import {
   nodeRuntime,
   withDeadLetterQueue,
@@ -321,3 +321,25 @@ Trait callbacks also receive the untyped lookup. A trait is written alongside it
 | `ActionTrait<Construct>` | Runs arbitrary logic. `run` receives the concrete construct and the lookup. | Phase 2, latest-declared first |
 
 All traits carry a `name` field. It has no functional effect — it documents intent and is the unit of granularity at code review.
+
+---
+
+## Releasing
+
+The package is published to npm as
+[`@arts-n-crafts/cdk-composition`](https://www.npmjs.com/package/@arts-n-crafts/cdk-composition).
+`dist/` is what ships — `bun run build` compiles `src/` to ESM plus type
+declarations, and nothing else is included.
+
+1. Bump `version` in `package.json` and commit it.
+2. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
+3. Publish a GitHub release for that tag. [`.github/workflows/publish.yml`](.github/workflows/publish.yml)
+   lints, tests, builds, checks the tag against `package.json`, and runs
+   `npm publish --provenance`.
+
+The workflow needs an npm automation token in the repository secret
+`NPM_TOKEN`, and — for provenance — npm's publishing settings for the package
+must allow GitHub Actions.
+
+To publish by hand instead: `npm publish` (`prepublishOnly` runs lint, tests
+and the build first).
