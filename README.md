@@ -336,12 +336,15 @@ Declarations are bundled rather than emitted file-by-file, so the shipped `.d.ts
 
 To cut a release:
 
-1. Bump `version` in `package.json` and merge it to `main`.
-2. Run the **Publish** workflow from the Actions tab.
+Run the **Publish** workflow from the Actions tab and pick a bump — `patch`, `minor` or `major`. That is the whole procedure: nothing is bumped or tagged by hand.
 
-`package.json` is the single source of truth for the version. The workflow reads it, refuses to run if the tag already exists or the version is already on npm, runs lint, the tests and the build, publishes, and only then creates the `vX.Y.Z` tag and the GitHub release with generated notes. Nothing is tagged by hand, and a failed publish never leaves a release pointing at a version npm does not have.
+The workflow applies the bump, refuses to continue if the resulting tag already exists or the version is already on npm, runs lint, the tests and the build, pushes the bump to `main`, publishes, and creates the `vX.Y.Z` tag and the GitHub release with generated notes.
 
-Tick **dry run** to take the same pipeline as far as `npm publish --dry-run` and stop before publishing or tagging.
+The order of those last three steps is deliberate. The bump is pushed *before* the publish, so a push that fails — a protected branch, another commit landing first — leaves nothing published and `main` untouched; the reverse order can put a version on npm that the repository has no record of, which cannot be undone. The release is created *after* the publish, so a failed publish never leaves a release pointing at a version npm does not have.
+
+If a run pushes its bump and then fails to publish, re-run with bump `none`: it publishes the version already in `package.json` rather than bumping again.
+
+Tick **dry run** to take the same pipeline as far as `npm publish --dry-run` and stop before pushing, publishing or tagging.
 
 ### Trusted publishing
 

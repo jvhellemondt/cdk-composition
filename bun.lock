@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "cdk-composition",
+      "name": "@arts-n-crafts/cdk-composition",
       "devDependencies": {
         "aws-cdk": "^2.262.0",
         "aws-cdk-lib": "^2.262.0",

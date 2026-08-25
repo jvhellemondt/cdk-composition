@@ -1,6 +1,6 @@
-# Releases are cut by dispatching this workflow from the Actions tab. It reads
-# the version from package.json, publishes to npm, then creates the matching
-# tag and GitHub release — so a release never needs a tag pushed by hand.
+# Releases are cut by dispatching this workflow from the Actions tab. It bumps
+# the version, publishes to npm, then creates the matching tag and GitHub
+# release — nothing has to be bumped or tagged by hand.
 #
 # The filename matters: npm's trusted publisher matches on it. Renaming this
 # file breaks publishing until the configuration on npmjs.com is updated.
@@ -9,14 +9,24 @@ name: Publish
 on:
   workflow_dispatch:
     inputs:
+      bump:
+        description: Version bump to apply before publishing
+        type: choice
+        options: [patch, minor, major, none]
+        default: patch
       dry_run:
-        description: Validate and pack, but do not publish or tag
+        description: Validate and pack, but do not push, publish or tag
         type: boolean
         default: false
 
 permissions:
-  contents: write # create the release tag and the GitHub release
+  contents: write # push the version bump, create the tag and the release
   id-token: write # npm trusted publishing (OIDC)
+
+# Two releases at once would race on the version bump.
+concurrency:
+  group: publish
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -42,22 +52,26 @@ jobs:
         with:
           node-version: 24
 
-      - name: Read the version to release
+      # "none" republishes the version already in package.json. It is the retry
+      # path for a run that pushed its bump and then failed to publish.
+      - name: Apply the version bump
         id: version
         run: |
+          if [ "${{ inputs.bump }}" != "none" ]; then
+            npm version "${{ inputs.bump }}" --no-git-tag-version >/dev/null
+          fi
           version="$(node -p "require('./package.json').version")"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
-          echo "Releasing $version"
+          echo "Releasing $version (bump: ${{ inputs.bump }})"
 
-      # Both checks below catch the same mistake — dispatching without bumping
-      # package.json — before anything is published, rather than after npm has
-      # rejected the duplicate with a 409.
+      # Both checks below fail the run before anything is pushed or published,
+      # rather than leaving a 409 from the registry to explain the mistake.
       - name: Check the tag does not already exist
         run: |
           tag="${{ steps.version.outputs.tag }}"
           if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-            echo "Tag $tag already exists. Bump the version in package.json first." >&2
+            echo "Tag $tag already exists." >&2
             exit 1
           fi
 
@@ -66,7 +80,7 @@ jobs:
           name="$(node -p "require('./package.json').name")"
           version="${{ steps.version.outputs.version }}"
           if npm view "$name@$version" version >/dev/null 2>&1; then
-            echo "$name@$version is already published. Bump the version in package.json first." >&2
+            echo "$name@$version is already published." >&2
             exit 1
           fi
 
@@ -81,6 +95,20 @@ jobs:
       - name: Publish (dry run)
         if: inputs.dry_run
         run: npm publish --dry-run
+
+      # Pushed before publishing, deliberately. If the push fails — a protected
+      # branch, or another commit landing first — nothing has been published and
+      # main is untouched. The reverse order can put a version on npm that the
+      # repository has no record of, which cannot be undone.
+      - name: Push the version bump
+        if: ${{ !inputs.dry_run && inputs.bump != 'none' }}
+        id: commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Release ${{ steps.version.outputs.version }}" package.json
+          git push origin HEAD:main
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       # No NODE_AUTH_TOKEN: npm exchanges the workflow's OIDC token for
       # short-lived credentials, against the trusted publisher configured on
@@ -97,6 +125,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ steps.version.outputs.tag }}" \
-            --target "$GITHUB_SHA" \
+            --target "${{ steps.commit.outputs.sha || github.sha }}" \
             --title "${{ steps.version.outputs.tag }}" \
             --generate-notes
