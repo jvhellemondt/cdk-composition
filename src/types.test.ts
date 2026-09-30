@@ -154,7 +154,7 @@ function _assertions() {
   ]);
 
   // --- After build(), ids declared literally are typed and non-optional ---
-  const named = compose(Queue, [], 'Inbox').and(Bucket, [], 'Store').build(scope, 'R');
+  const named = compose(Queue, [], 'Inbox').and(Bucket, [], 'Store').buildConstruct(scope, 'R');
   // No `?` — the composition declared the id, so build() created it.
   const inbox = named.resources.get('Inbox');
   const store = named.resources.get('Store');
@@ -171,12 +171,12 @@ function _assertions() {
   void unknownId.node;
 
   // A defaulted id is derived from the class name at runtime, so it stays untyped.
-  const defaulted = compose(Queue).build(scope, 'R');
+  const defaulted = compose(Queue).buildConstruct(scope, 'R');
   // @ts-expect-error - get("Queue") yields Construct | undefined
   void defaulted.resources.get('Queue').queueArn;
 
   // A non-literal id is unknowable, and must not widen every lookup to a Queue.
-  const dynamic = compose(Queue, [], runtimeId).build(scope, 'R');
+  const dynamic = compose(Queue, [], runtimeId).buildConstruct(scope, 'R');
   // @ts-expect-error - nothing was bound, so this is Construct | undefined
   void dynamic.resources.get('anything').queueArn;
 
@@ -218,7 +218,7 @@ function _assertions() {
   compose(NotAConstruct);
 
   // build() hands back the constructs typed, in declaration order.
-  const built = compose(Queue).and(Bucket).and(LogGroup).build(scope, 'R');
+  const built = compose(Queue).and(Bucket).and(LogGroup).buildConstruct(scope, 'R');
   const [queue, bucket, logGroup] = built.constructs;
   const _arns: string[] = [queue.queueArn, bucket.bucketArn, logGroup.logGroupArn];
   // @ts-expect-error - the tuple has exactly three entries

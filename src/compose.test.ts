@@ -22,7 +22,7 @@ function statement() {
 describe('compose', () => {
   test('creates all declared constructs under a shared root', () => {
     const s = stack();
-    compose(Queue).and(Bucket).build(s, 'Service');
+    compose(Queue).and(Bucket).buildConstruct(s, 'Service');
     const t = Template.fromStack(s);
     t.resourceCountIs('AWS::SQS::Queue', 1);
     t.resourceCountIs('AWS::S3::Bucket', 1);
@@ -32,7 +32,7 @@ describe('compose', () => {
     const s = stack();
     compose(Queue, [
       { name: 'visibility', type: 'property', value: { visibilityTimeout: Duration.seconds(60) } },
-    ]).build(s, 'Service');
+    ]).buildConstruct(s, 'Service');
     Template.fromStack(s).hasResourceProperties('AWS::SQS::Queue', {
       VisibilityTimeout: 60,
     });
@@ -43,7 +43,7 @@ describe('compose', () => {
     compose(Queue, [
       { name: 'first', type: 'property', value: { visibilityTimeout: Duration.seconds(30) } },
       { name: 'second', type: 'property', value: { visibilityTimeout: Duration.seconds(60) } },
-    ]).build(s, 'Service');
+    ]).buildConstruct(s, 'Service');
     Template.fromStack(s).hasResourceProperties('AWS::SQS::Queue', {
       VisibilityTimeout: 60,
     });
@@ -57,7 +57,7 @@ describe('compose', () => {
         type: 'property',
         value: (_r) => ({ visibilityTimeout: Duration.seconds(90) }),
       },
-    ]).build(s, 'Service');
+    ]).buildConstruct(s, 'Service');
     Template.fromStack(s).hasResourceProperties('AWS::SQS::Queue', {
       VisibilityTimeout: 90,
     });
@@ -78,7 +78,7 @@ describe('compose', () => {
       },
     ])
       .and(Bucket)
-      .build(s, 'Service');
+      .buildConstruct(s, 'Service');
 
     expect(resolvedBucket).toBeInstanceOf(Bucket);
   });
@@ -98,7 +98,7 @@ describe('compose', () => {
           },
         },
       ])
-      .build(s, 'Service');
+      .buildConstruct(s, 'Service');
 
     expect(resolvedBucket).toBeInstanceOf(Bucket);
   });
@@ -111,7 +111,7 @@ describe('compose', () => {
         type: 'method',
         args: (_r) => [{ expiration: Duration.days(30) }],
       },
-    ]).build(s, 'Service');
+    ]).buildConstruct(s, 'Service');
     Template.fromStack(s).hasResourceProperties('AWS::S3::Bucket', {
       LifecycleConfiguration: {
         Rules: Match.arrayWith([Match.objectLike({ Status: 'Enabled' })]),
@@ -134,7 +134,7 @@ describe('compose', () => {
       },
     ])
       .and(Bucket)
-      .build(s, 'Service');
+      .buildConstruct(s, 'Service');
 
     expect(captured?.has('Queue')).toBe(true);
     expect(captured?.has('Bucket')).toBe(true);
@@ -165,7 +165,7 @@ describe('compose', () => {
           },
         },
       ])
-      .build(s, 'Service');
+      .buildConstruct(s, 'Service');
 
     // Queue (compose first) should run before Bucket (.and second).
     expect(order).toEqual([1, 2]);
@@ -185,7 +185,7 @@ describe('compose', () => {
       },
     };
 
-    compose(Queue, [inspect]).and(Bucket).build(s, 'Service');
+    compose(Queue, [inspect]).and(Bucket).buildConstruct(s, 'Service');
 
     expect(capturedConstruct).toBeInstanceOf(Queue);
     expect(capturedResources?.has('Queue')).toBe(true);
@@ -215,7 +215,7 @@ describe('compose', () => {
           },
         },
       ])
-      .build(s, 'Service');
+      .buildConstruct(s, 'Service');
 
     expect(order).toEqual([1, 2]);
   });
@@ -230,7 +230,7 @@ describe('compose', () => {
 
   test('multiple and() calls each add a sibling', () => {
     const s = stack();
-    compose(Queue).and(Queue).and(Bucket).build(s, 'Service');
+    compose(Queue).and(Queue).and(Bucket).buildConstruct(s, 'Service');
     const t = Template.fromStack(s);
     t.resourceCountIs('AWS::SQS::Queue', 2);
     t.resourceCountIs('AWS::S3::Bucket', 1);
@@ -240,7 +240,7 @@ describe('compose', () => {
 describe('compose — ids', () => {
   test('resolves CDK class names through jsii, not the bundled class name', () => {
     const s = stack();
-    const { resources } = compose(Queue).and(Bucket).build(s, 'Service');
+    const { resources } = compose(Queue).and(Bucket).buildConstruct(s, 'Service');
     // aws-cdk-lib is bundled: Queue.name is "Queue2" at runtime.
     expect(resources.has('Queue')).toBe(true);
     expect(resources.has('Bucket')).toBe(true);
@@ -250,35 +250,37 @@ describe('compose — ids', () => {
     class ServiceV2 extends Construct {}
     class Layer3 extends Construct {}
     const s = stack();
-    const { resources } = compose(ServiceV2).and(Layer3).build(s, 'Service');
+    const { resources } = compose(ServiceV2).and(Layer3).buildConstruct(s, 'Service');
     expect(resources.has('ServiceV2')).toBe(true);
     expect(resources.has('Layer3')).toBe(true);
   });
 
   test('suffixes repeats of the same class', () => {
     const s = stack();
-    const { resources } = compose(Queue).and(Queue).and(Queue).build(s, 'Service');
+    const { resources } = compose(Queue).and(Queue).and(Queue).buildConstruct(s, 'Service');
     expect(['Queue', 'Queue1', 'Queue2'].every((id) => resources.has(id))).toBe(true);
   });
 
   test('accepts an explicit id', () => {
     const s = stack();
-    const { resources } = compose(Queue, [], 'Inbox').and(Queue, [], 'Outbox').build(s, 'Service');
+    const { resources } = compose(Queue, [], 'Inbox')
+      .and(Queue, [], 'Outbox')
+      .buildConstruct(s, 'Service');
     expect(resources.has('Inbox')).toBe(true);
     expect(resources.has('Outbox')).toBe(true);
   });
 
   test('rejects colliding ids', () => {
     const s = stack();
-    expect(() => compose(Queue, [], 'Same').and(Bucket, [], 'Same').build(s, 'Service')).toThrow(
-      /Duplicate ids/
-    );
+    expect(() =>
+      compose(Queue, [], 'Same').and(Bucket, [], 'Same').buildConstruct(s, 'Service')
+    ).toThrow(/Duplicate ids/);
   });
 
   test('rejects ids that would shadow a fixed member of the build result', () => {
     const s = stack();
     for (const reserved of ['root', 'constructs', 'resources']) {
-      expect(() => compose(Queue, [], reserved).build(s, `Service${reserved}`)).toThrow(
+      expect(() => compose(Queue, [], reserved).buildConstruct(s, `Service${reserved}`)).toThrow(
         /Reserved ids/
       );
     }
@@ -291,7 +293,7 @@ describe('compose — resources lookup', () => {
     let found: Bucket | undefined;
     compose(Queue, [{ name: 'peek', type: 'action', run: (_q, r) => void (found = r.of(Bucket)) }])
       .and(Bucket)
-      .build(s, 'Service');
+      .buildConstruct(s, 'Service');
     expect(found).toBeInstanceOf(Bucket);
   });
 
@@ -300,7 +302,7 @@ describe('compose — resources lookup', () => {
     expect(() =>
       compose(Queue, [
         { name: 'missing', type: 'action', run: (_q, r) => void r.of(Bucket) },
-      ]).build(s, 'Service')
+      ]).buildConstruct(s, 'Service')
     ).toThrow(/No Bucket in this composition/);
   });
 
@@ -319,7 +321,7 @@ describe('compose — resources lookup', () => {
     ])
       .and(Queue)
       .and(Queue)
-      .build(s, 'Service');
+      .buildConstruct(s, 'Service');
     expect(count).toBe(2);
   });
 
@@ -327,7 +329,7 @@ describe('compose — resources lookup', () => {
     const s = stack();
     const { resources, constructs } = compose(Queue, [], 'Inbox')
       .and(Bucket, [], 'Store')
-      .build(s, 'Service');
+      .buildConstruct(s, 'Service');
     expect(resources.values()).toEqual([...constructs]);
   });
 
@@ -345,27 +347,29 @@ describe('compose — resources lookup', () => {
         },
       ])
         .and(Bucket)
-        .build(s, 'Service')
+        .buildConstruct(s, 'Service')
     ).toThrow(/Cyclic property dependency: Queue → Queue/);
   });
 
   test('get() returns the construct under an id', () => {
     const s = stack();
-    const { resources } = compose(Queue, [], 'Inbox').build(s, 'Service');
+    const { resources } = compose(Queue, [], 'Inbox').buildConstruct(s, 'Service');
     expect(resources.get('Inbox')).toBeInstanceOf(Queue);
     expect(resources.get('Nope')).toBeUndefined();
   });
 
   test('get() narrows to the witness class', () => {
     const s = stack();
-    const { resources } = compose(Queue, [], 'Inbox').and(Bucket, [], 'Store').build(s, 'Service');
+    const { resources } = compose(Queue, [], 'Inbox')
+      .and(Bucket, [], 'Store')
+      .buildConstruct(s, 'Service');
     expect(resources.get('Inbox', Queue)).toBeInstanceOf(Queue);
     expect(resources.get('Store', Bucket)).toBeInstanceOf(Bucket);
   });
 
   test('get() with a witness treats a class mismatch as a miss', () => {
     const s = stack();
-    const { resources } = compose(Queue, [], 'Inbox').build(s, 'Service');
+    const { resources } = compose(Queue, [], 'Inbox').buildConstruct(s, 'Service');
     expect(resources.get('Inbox', Bucket)).toBeUndefined();
     expect(resources.get('Nope', Queue)).toBeUndefined();
   });
@@ -373,7 +377,7 @@ describe('compose — resources lookup', () => {
   test('get() witnesses accept a base class', () => {
     class ServiceV2 extends Construct {}
     const s = stack();
-    const { resources } = compose(ServiceV2).build(s, 'Service');
+    const { resources } = compose(ServiceV2).buildConstruct(s, 'Service');
     expect(resources.get('ServiceV2', Construct)).toBeInstanceOf(ServiceV2);
   });
 });
@@ -395,8 +399,10 @@ describe('compose — instantiation order', () => {
   test('a resolved sibling is created first, whichever side declares it', () => {
     const before = compose(Bucket, [], 'B')
       .and(Queue, [readsBucket], 'Q')
-      .build(stack(), 'Service');
-    const after = compose(Queue, [readsBucket], 'Q').and(Bucket, [], 'B').build(stack(), 'Service');
+      .buildConstruct(stack(), 'Service');
+    const after = compose(Queue, [readsBucket], 'Q')
+      .and(Bucket, [], 'B')
+      .buildConstruct(stack(), 'Service');
 
     expect(created(before.root)).toEqual(['B', 'Q']);
     expect(created(after.root)).toEqual(['B', 'Q']);
@@ -407,7 +413,7 @@ describe('compose — instantiation order', () => {
       .and(Queue, [readsBucket], 'Second')
       .and(Bucket, [], 'Store')
       .and(Queue, [], 'Last')
-      .build(stack(), 'Service');
+      .buildConstruct(stack(), 'Service');
 
     expect(created(root)).toEqual(['First', 'Store', 'Second', 'Last']);
   });
@@ -427,7 +433,7 @@ describe('compose — instantiation order', () => {
     const { Store } = compose(Queue, [capture, capture], 'Q')
       .and(Queue, [capture], 'Q2')
       .and(Bucket, [], 'Store')
-      .build(s, 'Service');
+      .buildConstruct(s, 'Service');
 
     expect(seen).toHaveLength(3);
     expect(new Set(seen).size).toBe(1);
@@ -440,14 +446,16 @@ describe('compose — instantiation order', () => {
     const first = stack();
     const second = stack();
 
-    compose(Queue, [readsBucket], 'Q').and(Bucket, [], 'B').build(first, 'Service');
-    compose(Bucket, [], 'B').and(Queue, [readsBucket], 'Q').build(second, 'Service');
+    compose(Queue, [readsBucket], 'Q').and(Bucket, [], 'B').buildConstruct(first, 'Service');
+    compose(Bucket, [], 'B').and(Queue, [readsBucket], 'Q').buildConstruct(second, 'Service');
 
     expect(Template.fromStack(first).toJSON()).toEqual(Template.fromStack(second).toJSON());
   });
 
   test('constructs and the id-keyed result stay in declaration order', () => {
-    const built = compose(Queue, [readsBucket], 'Q').and(Bucket, [], 'B').build(stack(), 'Service');
+    const built = compose(Queue, [readsBucket], 'Q')
+      .and(Bucket, [], 'B')
+      .buildConstruct(stack(), 'Service');
     const [first, second] = built.constructs;
 
     expect(first).toBeInstanceOf(Queue);
@@ -467,12 +475,14 @@ describe('compose — instantiation order', () => {
     };
 
     expect(() =>
-      compose(Queue, [readsBucket], 'A').and(Bucket, [readsQueue], 'B').build(stack(), 'Service')
+      compose(Queue, [readsBucket], 'A')
+        .and(Bucket, [readsQueue], 'B')
+        .buildConstruct(stack(), 'Service')
     ).toThrow(/Cyclic property dependency: A → B → A/);
   });
 
   test('a property trait resolving its own entry is reported as a cycle', () => {
-    expect(() => compose(Bucket, [readsBucket], 'Self').build(stack(), 'Service')).toThrow(
+    expect(() => compose(Bucket, [readsBucket], 'Self').buildConstruct(stack(), 'Service')).toThrow(
       /Cyclic property dependency: Self → Self/
     );
   });
@@ -482,7 +492,7 @@ describe('compose — instantiation order', () => {
       compose(Queue, [readsBucket], 'Q')
         .and(Bucket, [], 'One')
         .and(Bucket, [], 'Two')
-        .build(stack(), 'Service')
+        .buildConstruct(stack(), 'Service')
     ).toThrow(/Ambiguous resources.of\(Bucket\)/);
   });
 });
@@ -502,7 +512,7 @@ describe('compose — prop merging', () => {
         }),
       },
       { name: 'more-env', type: 'property', value: { environment: { B: '2' } } },
-    ]).build(s, 'Service');
+    ]).buildConstruct(s, 'Service');
     Template.fromStack(s).hasResourceProperties('AWS::Lambda::Function', {
       Environment: { Variables: { A: '1', B: '2' } },
     });
@@ -513,7 +523,7 @@ describe('compose — prop merging', () => {
     compose(Queue, [
       { name: 'a', type: 'property', value: { visibilityTimeout: Duration.seconds(30) } },
       { name: 'b', type: 'property', value: { visibilityTimeout: Duration.seconds(60) } },
-    ]).build(s, 'Service');
+    ]).buildConstruct(s, 'Service');
     Template.fromStack(s).hasResourceProperties('AWS::SQS::Queue', { VisibilityTimeout: 60 });
   });
 });
@@ -521,7 +531,7 @@ describe('compose — prop merging', () => {
 describe('compose — build result', () => {
   test('returns the constructs typed and in declaration order', () => {
     const s = stack();
-    const { root, constructs } = compose(Queue).and(Bucket).build(s, 'Service');
+    const { root, constructs } = compose(Queue).and(Bucket).buildConstruct(s, 'Service');
     const [queue, bucket] = constructs;
     expect(queue).toBeInstanceOf(Queue);
     expect(bucket).toBeInstanceOf(Bucket);
@@ -533,7 +543,7 @@ describe('compose — build result', () => {
     const s = stack();
     const { Inbox, Store } = compose(Queue, [], 'Inbox')
       .and(Bucket, [], 'Store')
-      .build(s, 'Service');
+      .buildConstruct(s, 'Service');
     expect(Inbox).toBeInstanceOf(Queue);
     expect(Store).toBeInstanceOf(Bucket);
     expect(Inbox.queueArn).toBeDefined();
@@ -545,7 +555,7 @@ describe('compose — build result', () => {
     const built: Record<string, unknown> = compose(Queue)
       .and(Queue)
       .and(Bucket)
-      .build(s, 'Service');
+      .buildConstruct(s, 'Service');
     expect(Object.keys(built).toSorted()).toEqual([
       'Bucket',
       'Queue',
@@ -559,7 +569,7 @@ describe('compose — build result', () => {
 
   test('the named entries are the same instances as constructs and resources', () => {
     const s = stack();
-    const built = compose(Queue, [], 'Inbox').and(Bucket, [], 'Store').build(s, 'Service');
+    const built = compose(Queue, [], 'Inbox').and(Bucket, [], 'Store').buildConstruct(s, 'Service');
     const [queue, bucket] = built.constructs;
     expect(built.Inbox).toBe(queue);
     expect(built.Store).toBe(bucket);
@@ -634,7 +644,7 @@ describe('compose — method dispatch', () => {
     const s = stack();
     const bogus = { name: 'nope', type: 'method' as const, args: () => [] };
     expect(() =>
-      compose(Queue, [bogus as unknown as ActionTrait<Queue>]).build(s, 'Service')
+      compose(Queue, [bogus as unknown as ActionTrait<Queue>]).buildConstruct(s, 'Service')
     ).toThrow(/is not a function on/);
   });
 });
