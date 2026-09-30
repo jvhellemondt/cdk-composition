@@ -576,3 +576,32 @@ describe('compose — method dispatch', () => {
     ).toThrow(/is not a function on/);
   });
 });
+
+describe('compose — build without an id', () => {
+  test('creates the entries directly in the scope, which becomes the root', () => {
+    const s = stack();
+    const { root, Inbox } = compose(Queue, [], 'Inbox').build(s);
+    expect(root).toBe(s);
+    expect(Inbox.node.scope).toBe(s);
+  });
+
+  test('keeps the names of stacks built into an app', () => {
+    const app = new App();
+    const { Core } = compose(
+      Stack,
+      [{ name: 'named', type: 'property', value: { stackName: 'core-dev' } }],
+      'Core'
+    )
+      .and(Stack, [], 'Edge')
+      .build(app);
+    expect(Core.stackName).toBe('core-dev');
+    expect(app.node.findChild('Edge')).toBeInstanceOf(Stack);
+    expect((app.node.findChild('Edge') as Stack).stackName).toBe('Edge');
+  });
+
+  test('rejects an id already taken in the scope', () => {
+    const s = stack();
+    new Queue(s, 'Inbox');
+    expect(() => compose(Queue, [], 'Inbox').build(s)).toThrow(/Inbox/);
+  });
+});

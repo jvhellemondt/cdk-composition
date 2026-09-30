@@ -269,9 +269,15 @@ Starts a new `Composition` with one entry. `id` defaults to the construct's clas
 
 Appends a sibling entry. Returns a **new** `Composition` — the original is unchanged.
 
-### `Composition.build(scope, id)`
+### `Composition.build(scope, id?)`
 
-Materialises the composition under `scope`. Returns `{ root, constructs, resources, ...entriesById }`:
+Materialises the composition under `scope`. With an `id`, the entries are wrapped in a `Construct` of that id; without one, they are created directly in `scope`, which is what stacks need to keep their names:
+
+```ts
+compose(CoreStack, [...], 'Core').and(EdgeStack, [...], 'Edge').build(app);
+```
+
+Returns the root, the constructs, a lookup, and each construct under its own id:
 
 | Member | Returns |
 |--------|---------|

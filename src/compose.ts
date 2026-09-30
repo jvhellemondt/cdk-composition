@@ -168,7 +168,7 @@ export type BuildResult<
   Ts extends readonly Construct[],
   Ids extends IdMap = Record<never, Construct>,
 > = {
-  /** The scope the entries were created under. */
+  /** The scope the entries were created under: the wrapper, or `scope` itself when built without an id. */
   readonly root: Construct;
   /** The created constructs, typed and in declaration order. */
   readonly constructs: Ts;
@@ -439,11 +439,18 @@ export class Composition<
    * **Phase 2 — deferred traits, declaration order.** Method and action traits
    * run once every construct exists, so they may resolve any sibling freely.
    *
+   * @param scope - Where the composition is created.
+   * @param id - CDK id of a construct wrapping the entries. Omit it to create
+   *   the entries directly in `scope` — for stacks, which keep their names only
+   *   as direct children of an `App` or `Stage`. Without the wrapper the
+   *   entries share `scope` with everything else in it, so their ids must be
+   *   unique there, and a construct's logical ids change when it moves in or
+   *   out of a wrapper.
    * @returns The scope, the constructs in declaration order, a lookup, and each
    *   construct under its own id.
    */
-  build(scope: Construct, id: string): BuildResult<Ts, Ids> {
-    const root = new Construct(scope, id);
+  build(scope: Construct, id?: string): BuildResult<Ts, Ids> {
+    const root = id === undefined ? scope : new Construct(scope, id);
     const entries = this.#entries;
     const ids = this.#assignIds();
     const instances: (Construct | undefined)[] = new Array(entries.length);
