@@ -26,30 +26,30 @@ bun add @arts-n-crafts/cdk-composition
 
 Traits are **named, typed values defined outside the composition**. They live in a shared file or library, carry a descriptive name, and describe a single concern. A `compose()` call is then a readable manifest — which constructs belong together and which named capabilities each carries — with no configuration detail buried inside it.
 
-`build()` materialises the composition in two phases:
+`buildConstruct()` and `buildFlat()` materialise the composition in two phases:
 
 1. **Instantiation** — an entry is created the first time something asks for it. A property function resolving a sibling is what causes that sibling to be created, so the order emerges from the references traits actually make; entries nothing resolved are created by a final sweep in declaration order.
 2. **Deferred traits** — method and action traits run once every construct exists, in declaration order.
 
-Declaration order is therefore presentation, not build order: order the `.and()` chain for reading. A property trait may resolve any sibling, whether it is declared before or after. The one unsatisfiable case is two entries whose property traits resolve *each other*, which `build()` reports as a cycle naming the path — see [ADR-0002](docs/0002-demand-driven-instantiation.md).
+Declaration order is therefore presentation, not build order: order the `.and()` chain for reading. A property trait may resolve any sibling, whether it is declared before or after. The one unsatisfiable case is two entries whose property traits resolve *each other*, which building reports as a cycle naming the path — see [ADR-0002](docs/0002-demand-driven-instantiation.md).
 
-`build()` returns each construct under its own id, plus the same constructs typed and in declaration order, so nothing needs to be looked up afterwards:
+Building returns each construct under its own id, plus the same constructs typed and in declaration order, so nothing needs to be looked up afterwards:
 
 ```ts
 const { fn, queue } = compose(Function, [nodeRuntime], "fn")
   .and(Queue, [], "queue")
-  .build(this, "Worker");
+  .buildConstruct(this, "Worker");
 
 queue.grantSendMessages(fn); // fully typed
 
 // Or positionally, when the ids don't matter:
-const { constructs: [handler, jobs] } = compose(Function, [nodeRuntime]).and(Queue).build(this, "Jobs");
+const { constructs: [handler, jobs] } = compose(Function, [nodeRuntime]).and(Queue).buildConstruct(this, "Jobs");
 ```
 
-Entries are named by their class name, with a numeric suffix on repeats (`Queue`, `Queue1`, …). Pass a third argument to `compose`/`and` to set the id yourself — worth doing when you want a stable, meaningful logical id, or a name to destructure `build()` by:
+Entries are named by their class name, with a numeric suffix on repeats (`Queue`, `Queue1`, …). Pass a third argument to `compose`/`and` to set the id yourself — worth doing when you want a stable, meaningful logical id, or a name to destructure the build result by:
 
 ```ts
-const { Inbox, Outbox } = compose(Queue, [], "Inbox").and(Queue, [], "Outbox").build(this, "Mail");
+const { Inbox, Outbox } = compose(Queue, [], "Inbox").and(Queue, [], "Outbox").buildConstruct(this, "Mail");
 ```
 
 A defaulted id keys the entry at runtime too, but only ids written as literals are visible to the compiler — see [Why `get` is only sometimes typed](#why-get-is-only-sometimes-typed), which applies to these names for the same reason. `root`, `constructs` and `resources` are the build result's own members, so they are rejected as ids.
@@ -64,7 +64,7 @@ Merges configuration into a construct's props before it is instantiated.
 
 `value` is a plain object for static configuration, or a function when a prop needs to reference a sibling construct. The function may resolve any sibling regardless of where it sits in the chain: the composition creates whatever the trait asks for on the spot. A trait's requirement is therefore "the composition holds a `Queue`", never "a `Queue` is declared after me" — so traits stay portable between compositions.
 
-Use the function form for anything stateful (`Code.fromAsset`, for instance). The object form is shared across every `build()`, and CDK rejects a second binding.
+Use the function form for anything stateful (`Code.fromAsset`, for instance). The object form is shared across every build, and CDK rejects a second binding.
 
 Property traits merge left-to-right, later traits winning. Plain objects merge deeply, so separate traits can each contribute part of a nested prop; arrays and class instances are replaced outright.
 
@@ -91,7 +91,7 @@ export const withDeadLetterQueue: PropertyTrait = {
 // stack.ts
 compose(Function, [withDeadLetterQueue])
   .and(Queue, [thirtySecondVisibility])
-  .build(this, "Worker");
+  .buildConstruct(this, "Worker");
 ```
 
 Apply a base trait and override specific keys with a more specific one — no subclassing required.
@@ -131,11 +131,11 @@ export const withSqsEventSource = (batchSize = 10): MethodTrait => ({
 
 ```ts
 // stack.ts
-compose(Bucket, [ninetyDayExpiry]).build(this, "Archive");
+compose(Bucket, [ninetyDayExpiry]).buildConstruct(this, "Archive");
 
 compose(Function, [withSqsEventSource(5)])
   .and(Queue)
-  .build(this, "Worker");
+  .buildConstruct(this, "Worker");
 ```
 
 Method traits are applied in declaration order, after every construct in the composition exists.
@@ -174,9 +174,9 @@ export const httpRoute = (path: string, method: HttpMethod): ActionTrait<Functio
 
 ```ts
 // stack.ts — each route is its own composition; all wire to the same shared HttpApi
-compose(Function, [nodeRuntime, httpRoute("/orders", HttpMethod.POST)]).build(this, "CreateOrder");
-compose(Function, [nodeRuntime, httpRoute("/orders", HttpMethod.GET)]).build(this, "ListOrders");
-compose(Function, [nodeRuntime, httpRoute("/orders/:id", HttpMethod.DELETE)]).build(this, "DeleteOrder");
+compose(Function, [nodeRuntime, httpRoute("/orders", HttpMethod.POST)]).buildConstruct(this, "CreateOrder");
+compose(Function, [nodeRuntime, httpRoute("/orders", HttpMethod.GET)]).buildConstruct(this, "ListOrders");
+compose(Function, [nodeRuntime, httpRoute("/orders/:id", HttpMethod.DELETE)]).buildConstruct(this, "DeleteOrder");
 ```
 
 Because `httpRoute` finds the `HttpApi` via the CDK tree rather than through the resources map, each composition stays self-contained. No shared state, no cross-composition imports, no ordering dependencies.
@@ -252,7 +252,7 @@ import {
 
 compose(Function, [nodeRuntime, withDeadLetterQueue, withSqsEventSource(), statusRoute("/worker/status")])
   .and(Queue, [workerVisibility])
-  .build(this, "Worker");
+  .buildConstruct(this, "Worker");
 ```
 
 The stack file says what exists and what it can do. The trait file says how each capability is implemented. Neither knows about the other's internals.
@@ -269,28 +269,38 @@ Starts a new `Composition` with one entry. `id` defaults to the construct's clas
 
 Appends a sibling entry. Returns a **new** `Composition` — the original is unchanged.
 
-### `Composition.build(scope, id?)`
+### `Composition.buildConstruct(scope, id)`
 
-Materialises the composition under `scope`. With an `id`, the entries are wrapped in a `Construct` of that id; without one, they are created directly in `scope`, which is what stacks need to keep their names:
+Materialises the composition inside a `Construct` of its own, created in `scope` under `id`. The entries' ids only need to be unique within the composition — the usual choice inside a stack.
+
+### `Composition.buildFlat(scope)`
+
+Materialises the composition directly in `scope`, without a construct of its own. Stacks need this to keep their names, since only a direct child of an `App` or `Stage` is named after its id:
 
 ```ts
-compose(CoreStack, [...], 'Core').and(EdgeStack, [...], 'Edge').build(app);
+compose(CoreStack, [...], 'Core').and(EdgeStack, [...], 'Edge').buildFlat(app);
 ```
 
-Returns the root, the constructs, a lookup, and each construct under its own id:
+The entries share `scope` with everything else in it, so their ids must be unique there. A construct's logical ids change when it moves between `buildFlat` and `buildConstruct`.
+
+Both return the root, the constructs, a lookup, and each construct under its own id:
 
 | Member | Returns |
 |--------|---------|
-| `root` | The scope the entries were created under. |
+| `root` | Where the entries were created: the wrapping construct, or `scope` itself for `buildFlat`. |
 | `constructs` | The created constructs as a typed tuple, in declaration order. |
 | `resources` | A `Resources` lookup over the same constructs. |
 | *`<id>`* | The construct created under that id — typed for every id the composition declared literally. |
 
-`root`, `constructs` and `resources` cannot be used as entry ids; `build()` throws if one is.
+`root`, `constructs` and `resources` cannot be used as entry ids; building throws if one is.
+
+### `Composition.build(scope, id?)` — deprecated
+
+Calls `buildConstruct(scope, id)` when given an `id` and `buildFlat(scope)` without one. Use either directly, so the choice between them is visible.
 
 ### `Resources`
 
-Passed to trait callbacks and returned from `build()`.
+Passed to trait callbacks and returned by `buildConstruct()` and `buildFlat()`.
 
 | Member | Returns |
 |--------|---------|
@@ -303,12 +313,12 @@ Passed to trait callbacks and returned from `build()`.
 
 #### Why `get` is only sometimes typed
 
-A composition tracks the ids it was given, so `build()` can hand them back typed:
+A composition tracks the ids it was given, so building can hand them back typed:
 
 ```ts
-const { resources } = compose(HttpApi, [], "Api").and(LogGroup, [], "AccessLogs").build(this, "Gateway");
+const { resources } = compose(HttpApi, [], "Api").and(LogGroup, [], "AccessLogs").buildConstruct(this, "Gateway");
 
-resources.get("Api").apiEndpoint;      // HttpApi — no `?` needed, build() created it
+resources.get("Api").apiEndpoint;      // HttpApi — no `?` needed, buildConstruct() created it
 resources.get("AccessLogs").logGroupArn; // LogGroup
 resources.get("Nope");                 // Construct | undefined
 ```

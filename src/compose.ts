@@ -51,11 +51,11 @@ type Bind<Id extends string, C extends Construct> = string extends Id
 /**
  * Lookup for the constructs of a composition.
  *
- * Every method resolves an entry on demand: during {@link Composition.build}'s
- * first phase a lookup creates the construct it names if it does not exist yet,
- * so a property trait can reach any sibling regardless of where either sits in
- * the chain. Ordering is therefore discovered rather than declared — see
- * {@link Composition.build}.
+ * Every method resolves an entry on demand: during building's first phase a
+ * lookup creates the construct it names if it does not exist yet, so a property
+ * trait can reach any sibling regardless of where either sits in the chain.
+ * Ordering is therefore discovered rather than declared — see
+ * {@link Composition.buildConstruct}.
  *
  * `Ids` carries the ids declared literally in the composition, so `get` can
  * hand those back typed and non-optional. Trait callbacks receive the default —
@@ -104,8 +104,8 @@ export interface Resources<Ids extends IdMap = Record<never, Construct>> {
  *
  * Use the function form when the value depends on a sibling, or when it holds
  * per-stack state. Anything stateful — `Code.fromAsset`, a `Bucket` reference —
- * must use the function form, or the same instance is shared by every
- * `build()` and CDK rejects the second one.
+ * must use the function form, or the same instance is shared by every build
+ * and CDK rejects the second one.
  *
  * The function may resolve any sibling: the composition creates whatever it
  * asks for on the spot. Two entries that resolve *each other* from property
@@ -152,12 +152,12 @@ export type Trait<P = object, C extends Construct = Construct> =
   | ActionTrait<C>;
 
 /**
- * What {@link Composition.build} hands back: the fixed members below, plus one
- * entry per resource keyed by its id, so a construct can be destructured by
- * name instead of by position.
+ * What {@link Composition.buildConstruct} and {@link Composition.buildFlat} hand
+ * back: the fixed members below, plus one entry per resource keyed by its id, so
+ * a construct can be destructured by name instead of by position.
  *
  * ```ts
- * const { api, logs } = compose(HttpApi, [], "api").and(LogGroup, [], "logs").build(this, "Gateway");
+ * const { api, logs } = compose(HttpApi, [], "api").and(LogGroup, [], "logs").buildConstruct(this, "Gateway");
  * ```
  *
  * Only ids written as literals appear in the type — the same rule `resources.get`
@@ -168,7 +168,7 @@ export type BuildResult<
   Ts extends readonly Construct[],
   Ids extends IdMap = Record<never, Construct>,
 > = {
-  /** The scope the entries were created under: the wrapper, or `scope` itself when built without an id. */
+  /** Where the entries were created: the wrapping construct, or `scope` itself for {@link Composition.buildFlat}. */
   readonly root: Construct;
   /** The created constructs, typed and in declaration order. */
   readonly constructs: Ts;
@@ -338,15 +338,16 @@ function toEntry<T extends ConstructClass>(
 
 /**
  * An immutable description of constructs to create together under one scope.
- * Nothing is instantiated until {@link Composition.build}.
+ * Nothing is instantiated until {@link Composition.buildConstruct} or
+ * {@link Composition.buildFlat}.
  *
  * `Ts` accumulates the instance types as entries are added, and `Ids` the ids
- * declared literally, so `build` can hand both back typed.
+ * declared literally, so building can hand both back typed.
  *
  * @example
  * const { fn, queue } = compose(Function, [nodeRuntime], "fn")
  *   .and(Queue, [], "queue")
- *   .build(this, "Worker");
+ *   .buildConstruct(this, "Worker");
  */
 export class Composition<
   Ts extends readonly Construct[] = readonly [],
@@ -378,7 +379,7 @@ export class Composition<
    *   when a class appears more than once. Pass one explicitly if the class
    *   name is minified, you want a stable, meaningful logical id, or you want
    *   the entry typed under that name — both on the {@link BuildResult} itself
-   *   and through `resources.get(id)` — after {@link Composition.build}.
+   *   and through `resources.get(id)` — once built.
    */
   and<T extends ConstructClass, Id extends string = never>(
     ctor: T,
@@ -414,7 +415,7 @@ export class Composition<
     if (reserved.length > 0) {
       throw new Error(
         `Reserved ids in composition: ${[...new Set(reserved)].join(', ')}. ` +
-          `build() returns each resource under its own id alongside ` +
+          `building returns each resource under its own id alongside ` +
           `${[...RESERVED_IDS].join(', ')}, so those names cannot be used as ids.`
       );
     }
@@ -422,7 +423,11 @@ export class Composition<
   }
 
   /**
-   * Materialises the composition in two phases.
+   * Materialises the composition inside a construct of its own, created in
+   * `scope` under `id`. The entries are its children, so their ids only need to
+   * be unique within the composition — the usual choice inside a stack.
+   *
+   * Materialising runs in two phases.
    *
    * **Phase 1 — instantiation, on demand.** Each entry is created the first
    * time something asks for it, and a property trait asks by resolving a
@@ -439,18 +444,47 @@ export class Composition<
    * **Phase 2 — deferred traits, declaration order.** Method and action traits
    * run once every construct exists, so they may resolve any sibling freely.
    *
-   * @param scope - Where the composition is created.
-   * @param id - CDK id of a construct wrapping the entries. Omit it to create
-   *   the entries directly in `scope` — for stacks, which keep their names only
-   *   as direct children of an `App` or `Stage`. Without the wrapper the
-   *   entries share `scope` with everything else in it, so their ids must be
-   *   unique there, and a construct's logical ids change when it moves in or
-   *   out of a wrapper.
-   * @returns The scope, the constructs in declaration order, a lookup, and each
-   *   construct under its own id.
+   * @param scope - Where the wrapping construct is created.
+   * @param id - CDK id of the wrapping construct.
+   * @returns The wrapping construct as `root`, the constructs in declaration
+   *   order, a lookup, and each construct under its own id.
+   */
+  buildConstruct(scope: Construct, id: string): BuildResult<Ts, Ids> {
+    return this.#materialise(new Construct(scope, id));
+  }
+
+  /**
+   * Materialises the composition directly in `scope`, without a construct of
+   * its own — in the same two phases as {@link Composition.buildConstruct}.
+   *
+   * Use it for stacks, which keep their names only as direct children of an
+   * `App` or `Stage`. The entries share `scope` with everything else in it, so
+   * their ids must be unique there. A construct's logical ids change when it
+   * moves between `buildFlat` and `buildConstruct`.
+   *
+   * @param scope - Where the entries are created.
+   * @returns `scope` as `root`, the constructs in declaration order, a lookup,
+   *   and each construct under its own id.
+   */
+  buildFlat(scope: Construct): BuildResult<Ts, Ids> {
+    return this.#materialise(scope);
+  }
+
+  /**
+   * Materialises the composition: {@link Composition.buildConstruct} when given
+   * an `id`, {@link Composition.buildFlat} without one.
+   *
+   * @deprecated Whether the entries get a construct of their own changes their
+   *   logical ids, so say which you mean: use {@link Composition.buildConstruct}
+   *   to wrap them under `id`, or {@link Composition.buildFlat} to create them
+   *   directly in `scope`.
    */
   build(scope: Construct, id?: string): BuildResult<Ts, Ids> {
-    const root = id === undefined ? scope : new Construct(scope, id);
+    return id === undefined ? this.buildFlat(scope) : this.buildConstruct(scope, id);
+  }
+
+  /** Creates the entries in `root` and applies their traits. */
+  #materialise(root: Construct): BuildResult<Ts, Ids> {
     const entries = this.#entries;
     const ids = this.#assignIds();
     const instances: (Construct | undefined)[] = new Array(entries.length);
@@ -528,7 +562,8 @@ export class Composition<
 
 /**
  * Starts a {@link Composition}. Chain {@link Composition.and} to add siblings,
- * then {@link Composition.build} to create everything under one scope.
+ * then {@link Composition.buildConstruct} or {@link Composition.buildFlat} to
+ * create everything.
  *
  * Traits are checked against `ctor`: property values against its props, method
  * names and arguments against its methods, and action callbacks receive the
@@ -540,7 +575,7 @@ export class Composition<
  *   { name: "addEventSource", type: "method", args: (r) => [new SqsEventSource(r.of(Queue))] },
  * ])
  *   .and(Queue)
- *   .build(this, "Worker");
+ *   .buildConstruct(this, "Worker");
  * ```
  *
  * @param ctor - The construct class to start with.

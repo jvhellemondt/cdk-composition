@@ -567,20 +567,27 @@ describe('compose — build result', () => {
   });
 });
 
-describe('compose — method dispatch', () => {
-  test('throws a clear error when the method is missing at runtime', () => {
+describe('compose — buildConstruct', () => {
+  test('creates the entries in a construct of their own, which becomes the root', () => {
     const s = stack();
-    const bogus = { name: 'nope', type: 'method' as const, args: () => [] };
-    expect(() =>
-      compose(Queue, [bogus as unknown as ActionTrait<Queue>]).build(s, 'Service')
-    ).toThrow(/is not a function on/);
+    const { root, Inbox } = compose(Queue, [], 'Inbox').buildConstruct(s, 'Service');
+    expect(root.node.id).toBe('Service');
+    expect(root.node.scope).toBe(s);
+    expect(Inbox.node.scope).toBe(root);
+  });
+
+  test('lets two compositions in one scope reuse entry ids', () => {
+    const s = stack();
+    compose(Queue, [], 'Inbox').buildConstruct(s, 'First');
+    compose(Queue, [], 'Inbox').buildConstruct(s, 'Second');
+    Template.fromStack(s).resourceCountIs('AWS::SQS::Queue', 2);
   });
 });
 
-describe('compose — build without an id', () => {
+describe('compose — buildFlat', () => {
   test('creates the entries directly in the scope, which becomes the root', () => {
     const s = stack();
-    const { root, Inbox } = compose(Queue, [], 'Inbox').build(s);
+    const { root, Inbox } = compose(Queue, [], 'Inbox').buildFlat(s);
     expect(root).toBe(s);
     expect(Inbox.node.scope).toBe(s);
   });
@@ -593,7 +600,7 @@ describe('compose — build without an id', () => {
       'Core'
     )
       .and(Stack, [], 'Edge')
-      .build(app);
+      .buildFlat(app);
     expect(Core.stackName).toBe('core-dev');
     expect(app.node.findChild('Edge')).toBeInstanceOf(Stack);
     expect((app.node.findChild('Edge') as Stack).stackName).toBe('Edge');
@@ -602,6 +609,32 @@ describe('compose — build without an id', () => {
   test('rejects an id already taken in the scope', () => {
     const s = stack();
     new Queue(s, 'Inbox');
-    expect(() => compose(Queue, [], 'Inbox').build(s)).toThrow(/Inbox/);
+    expect(() => compose(Queue, [], 'Inbox').buildFlat(s)).toThrow(/Inbox/);
+  });
+});
+
+describe('compose — build (deprecated)', () => {
+  test('builds in a construct of its own when given an id', () => {
+    const s = stack();
+    const { root, Inbox } = compose(Queue, [], 'Inbox').build(s, 'Service');
+    expect(root.node.id).toBe('Service');
+    expect(Inbox.node.scope).toBe(root);
+  });
+
+  test('builds directly in the scope without an id', () => {
+    const s = stack();
+    const { root, Inbox } = compose(Queue, [], 'Inbox').build(s);
+    expect(root).toBe(s);
+    expect(Inbox.node.scope).toBe(s);
+  });
+});
+
+describe('compose — method dispatch', () => {
+  test('throws a clear error when the method is missing at runtime', () => {
+    const s = stack();
+    const bogus = { name: 'nope', type: 'method' as const, args: () => [] };
+    expect(() =>
+      compose(Queue, [bogus as unknown as ActionTrait<Queue>]).build(s, 'Service')
+    ).toThrow(/is not a function on/);
   });
 });

@@ -22,12 +22,12 @@ export class GatewayStack extends Stack {
     const { Stage: stage } = compose(HttpStage, [withAccessLogging], "Stage")
       .and(HttpApi, [noDefaultStage], "Api")
       .and(LogGroup, [oneWeekRetention], "AccessLogs")
-      .build(this, "Gateway");
+      .buildConstruct(this, "Gateway");
 
     // Independent composition — healthRoute locates the HttpApi via Stack.of().
-    compose(LambdaFunction, [healthHandler, healthRoute("/health")]).build(this, "Health");
+    compose(LambdaFunction, [healthHandler, healthRoute("/health")]).buildConstruct(this, "Health");
 
-    // `stage` is typed as HttpStage, straight out of build() under the id it
+    // `stage` is typed as HttpStage, straight out of buildConstruct() under the id it
     // was declared with — no lookup, no positional tuple. Suppressing the
     // API's own default stage leaves HttpApi.url undefined, but the stage we
     // built knows its own URL.
